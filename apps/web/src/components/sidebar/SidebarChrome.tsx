@@ -88,6 +88,16 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       >
         Code
       </span>
+      <span
+        className={cn(
+          "inline-flex h-4 shrink-0 items-center rounded-[5px] border px-1 text-[9px] font-semibold leading-none tracking-[0.04em]",
+          onBackdrop
+            ? "border-white/20 bg-white/12 text-white/85"
+            : "border-indigo-500/20 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300",
+        )}
+      >
+        Mod
+      </span>
     </Link>
   );
 }
