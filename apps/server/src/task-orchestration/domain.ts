@@ -97,35 +97,46 @@ export const isTerminal = (thread: OrchestrationThread) => {
 export const taskRootId = (thread: OrchestrationThread): ThreadId =>
   thread.taskRelation?.rootThreadId ?? thread.id;
 
-export const validateCreateLimits = (input: {
-  readonly caller: OrchestrationThread;
-  readonly threads: ReadonlyArray<OrchestrationThread>;
-  readonly requestedCount: number;
-}): number => {
-  if (input.requestedCount < 1 || input.requestedCount > 4) {
-    return fail("invalid_arguments", "'tasks' must contain one to four task definitions.");
-  }
-  const childDepth = (input.caller.taskRelation?.depth ?? 0) + 1;
-  if (childDepth > 2) {
-    return fail("depth_limit", "Task depth cannot exceed 2.");
-  }
-  const activeChildren = input.threads.filter(
-    (thread) =>
-      thread.taskRelation?.rootThreadId === taskRootId(input.caller) &&
-      thread.deletedAt === null &&
-      thread.archivedAt === null &&
-      !isTerminal(thread),
-  ).length;
-  if (activeChildren + input.requestedCount > 4) {
-    return fail("active_child_limit", "This task root is limited to 4 active children.");
-  }
-  return childDepth;
-};
+export const createLimitForCaller = (caller: OrchestrationThread): number =>
+  caller.taskRelation === null ? 10 : 4;
 
 export const ownsThread = (caller: OrchestrationThread, target: OrchestrationThread): boolean =>
   target.taskRelation !== null &&
   target.taskRelation.parentThreadId === caller.id &&
   target.projectId === caller.projectId;
+
+export const validateCreateLimits = (input: {
+  readonly caller: OrchestrationThread;
+  readonly threads: ReadonlyArray<OrchestrationThread>;
+  readonly requestedCount: number;
+}): number => {
+  const childDepth = (input.caller.taskRelation?.depth ?? 0) + 1;
+  if (childDepth > 2) {
+    return fail("depth_limit", "Task depth cannot exceed 2.");
+  }
+  const activeChildLimit = createLimitForCaller(input.caller);
+  if (input.requestedCount < 1 || input.requestedCount > activeChildLimit) {
+    return fail(
+      "invalid_arguments",
+      `'tasks' must contain one to ${activeChildLimit} task definitions for this caller.`,
+    );
+  }
+  const activeChildren = input.threads.filter(
+    (thread) =>
+      ownsThread(input.caller, thread) &&
+      thread.deletedAt === null &&
+      thread.archivedAt === null &&
+      !isTerminal(thread),
+  ).length;
+  if (activeChildren + input.requestedCount > activeChildLimit) {
+    const callerLabel = input.caller.taskRelation === null ? "Root orchestrator" : "Child task";
+    return fail(
+      "active_child_limit",
+      `${callerLabel} is limited to ${activeChildLimit} active direct children.`,
+    );
+  }
+  return childDepth;
+};
 
 export interface TaskWaitState {
   readonly threadId: ThreadId;

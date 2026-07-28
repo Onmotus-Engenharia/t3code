@@ -507,6 +507,7 @@ const make = Effect.gen(function* () {
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+        taskOrchestrationEnabled: thread.taskOrchestrationEnabled,
         runtimeMode: desiredRuntimeMode,
       });
 
@@ -668,6 +669,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      taskOrchestrationEnabled: thread.taskOrchestrationEnabled,
     };
   });
 

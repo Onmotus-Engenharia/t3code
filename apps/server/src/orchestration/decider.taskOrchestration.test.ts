@@ -112,7 +112,11 @@ it.layer(NodeServices.layer)("task orchestration decider", (it) => {
         readModel: makeReadModel(false),
       });
       expect(Array.isArray(event)).toBe(false);
-      if (!("type" in event) || event.type !== "thread.created") {
+      if (
+        !("type" in event) ||
+        event.type !== "thread.created" ||
+        !("taskOrchestrationEnabled" in event.payload)
+      ) {
         return yield* Effect.die("Expected one thread.created event");
       }
       expect(event.payload.taskOrchestrationEnabled).toBe(true);

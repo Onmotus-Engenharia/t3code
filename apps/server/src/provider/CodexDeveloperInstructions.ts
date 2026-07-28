@@ -151,7 +151,12 @@ ${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
 export interface CodexRuntimeInfo {
   readonly model: string;
   readonly reasoningEffort: string;
+  readonly taskOrchestrationEnabled?: boolean;
 }
+
+export const CODEX_TASK_ORCHESTRATION_DEVELOPER_INSTRUCTIONS = `<task_orchestration>
+T3 task orchestration is enabled for this thread. Use only the \`t3_tasks\` dynamic tool namespace for delegation. Never call or use provider-native hidden subagent tools, including \`spawn_agent\`, \`spawnAgent\`, or equivalents. This rule applies on every turn, including when the user explicitly requests subagents.
+</task_orchestration>`;
 
 // Values come from trusted config, but keep the block single-line regardless.
 function toSingleLine(value: string): string {
@@ -166,7 +171,13 @@ export function buildCodexDeveloperInstructions(
     interactionMode === "plan"
       ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
       : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+  const taskOrchestrationInstructions =
+    runtime.taskOrchestrationEnabled === true
+      ? `
+
+${CODEX_TASK_ORCHESTRATION_DEVELOPER_INSTRUCTIONS}`
+      : "";
   return `${base}
 
-<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>`;
+<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>${taskOrchestrationInstructions}`;
 }

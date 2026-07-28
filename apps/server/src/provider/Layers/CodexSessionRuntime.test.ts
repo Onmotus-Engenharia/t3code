@@ -15,6 +15,7 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
+  CODEX_TASK_ORCHESTRATION_MULTI_AGENT_POLICY,
   buildTurnStartParams,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
@@ -195,6 +196,48 @@ describe("buildTurnStartParams", () => {
     NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
   });
 
+  it.effect("forbids provider-native subagents when T3 task orchestration is enabled", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Delegate this",
+        interactionMode: "default",
+        taskOrchestrationEnabled: true,
+      });
+
+      NodeAssert.deepStrictEqual(params.multiAgentMode, {
+        custom: CODEX_TASK_ORCHESTRATION_MULTI_AGENT_POLICY,
+      });
+      const policy = typeof params.multiAgentMode === "object" ? params.multiAgentMode.custom : "";
+      NodeAssert.match(policy, /t3_tasks/);
+      NodeAssert.match(policy, /spawn_agent/);
+      NodeAssert.match(policy, /forbidden/);
+      NodeAssert.match(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        /Never call or use provider-native hidden subagent tools/,
+      );
+    }),
+  );
+
+  it.effect("leaves provider-native subagent policy unchanged when orchestration is disabled", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Delegate this",
+        interactionMode: "default",
+        taskOrchestrationEnabled: false,
+      });
+
+      NodeAssert.equal(params.multiAgentMode, undefined);
+      NodeAssert.doesNotMatch(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        /provider-native hidden subagent tools/,
+      );
+    }),
+  );
+
   it.effect("routes approvals to the auto reviewer in auto mode", () =>
     Effect.gen(function* () {
       const params = yield* buildTurnStartParams({
@@ -257,6 +300,17 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /T3 Code/);
     NodeAssert.match(instructions, /Codex harness/);
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
+  });
+
+  it("adds explicit task orchestration precedence when enabled", () => {
+    const instructions = buildCodexDeveloperInstructions("default", {
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
+      taskOrchestrationEnabled: true,
+    });
+
+    NodeAssert.match(instructions, /Use only the `t3_tasks` dynamic tool namespace/);
+    NodeAssert.match(instructions, /`spawn_agent`/);
   });
 
   it("includes runtime info alongside plan mode instructions", () => {

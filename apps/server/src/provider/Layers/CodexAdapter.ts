@@ -1413,6 +1413,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          taskOrchestrationEnabled: input.taskOrchestrationEnabled === true,
           dynamicTools: T3_TASK_DYNAMIC_TOOLS,
           handleDynamicToolCall: (payload) =>
             executeT3TaskTool({
@@ -1565,6 +1566,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           : {}),
         ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.taskOrchestrationEnabled !== undefined
+          ? { taskOrchestrationEnabled: input.taskOrchestrationEnabled }
+          : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));

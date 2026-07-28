@@ -18,6 +18,7 @@ import { T3Tasks } from "../Services/T3Tasks.ts";
 import { type T3TaskToolCall, installT3TaskToolHandler } from "../Services/T3TaskToolBridge.ts";
 import {
   ToolFailure,
+  createLimitForCaller,
   fail,
   hasTaskWaitChange,
   isTerminal,
@@ -33,7 +34,8 @@ import {
 } from "../domain.ts";
 import { executeCreate } from "../create.ts";
 
-const MAX_BATCH = 4;
+const MAX_CREATE_BATCH = 10;
+const MAX_WAIT_BATCH = 4;
 const MAX_READ_MESSAGES = 20;
 const MAX_READ_CHARS = 12_000;
 const MAX_WAIT_SECONDS = 60;
@@ -172,7 +174,11 @@ export const makeT3Tasks = Effect.gen(function* () {
 
     if (tool === "wait") {
       const waitsValue = args.tasks;
-      if (!Array.isArray(waitsValue) || waitsValue.length < 1 || waitsValue.length > MAX_BATCH) {
+      if (
+        !Array.isArray(waitsValue) ||
+        waitsValue.length < 1 ||
+        waitsValue.length > MAX_WAIT_BATCH
+      ) {
         return fail("invalid_arguments", "'tasks' must contain one to four wait cursors.");
       }
       const waits = waitsValue.map((value) => {
@@ -320,13 +326,43 @@ export const makeT3Tasks = Effect.gen(function* () {
       return { threadId: target.id, pinned: args.pinned };
     }
 
+    if (tool === "orchestration") {
+      if (caller.taskRelation !== null) {
+        return fail("depth_limit", "Only a root orchestrator may change child task orchestration.");
+      }
+      const target = ownedTarget(caller, snapshot.threads, requiredString(args, "threadId"));
+      if (target.taskRelation?.depth !== 1 || target.taskRelation.rootThreadId !== caller.id) {
+        return fail(
+          "depth_limit",
+          `Task '${target.id}' is not a valid direct child of root orchestrator '${caller.id}'.`,
+        );
+      }
+      if (typeof args.enabled !== "boolean") {
+        return fail("invalid_arguments", "'enabled' must be a boolean.");
+      }
+      yield* engine.dispatch({
+        type: "thread.task-orchestration.set",
+        commandId: yield* commandId,
+        threadId: target.id,
+        enabled: args.enabled,
+      });
+      return { threadId: target.id, enabled: args.enabled };
+    }
+
     if (tool !== "create") {
       return fail("invalid_arguments", `Unknown t3_tasks tool '${tool}'.`);
     }
 
     const taskValues = args.tasks;
-    if (!Array.isArray(taskValues) || taskValues.length < 1 || taskValues.length > MAX_BATCH) {
-      return fail("invalid_arguments", "'tasks' must contain one to four task definitions.");
+    if (
+      !Array.isArray(taskValues) ||
+      taskValues.length < 1 ||
+      taskValues.length > MAX_CREATE_BATCH
+    ) {
+      return fail(
+        "invalid_arguments",
+        `'tasks' must contain one to ${createLimitForCaller(caller)} task definitions for this caller.`,
+      );
     }
     return yield* executeCreate({
       taskValues,

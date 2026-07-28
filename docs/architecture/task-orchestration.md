@@ -13,8 +13,9 @@ already supports `dynamicTools` on `thread/start` and `item/tool/call` requests.
 advertises the `t3_tasks` namespace on custom Codex sessions and rechecks persisted authorization on
 every call. This avoids another local MCP process and keeps ownership decisions inside T3.
 
-The checked-in Codex protocol schema has a narrow compatibility field for `dynamicTools`; remove it
-when the vendored upstream schema includes that field.
+When orchestration is enabled, every Codex turn sets a custom `multiAgentMode` that forbids
+provider-native hidden subagents and requires delegation through `t3_tasks`. The current persisted
+flag is sent on every turn, so changing it affects an existing provider session without restart.
 
 ## Tool contracts
 
@@ -22,15 +23,16 @@ The Codex namespace is `t3_tasks`. Each call returns a Codex dynamic-tool respon
 JSON `inputText` item. Success responses set `success: true`; failures set `success: false` and
 return `{ "error": { "code": "...", "message": "..." } }`.
 
-| Tool                 | Input                                                                                                                          | Result                                                                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `t3_tasks.create`    | `tasks` (1–4): `prompt`; optional `title`, `projectId`, `workspacePath`, `model`, `reasoningEffort`, `pinned`, `workspaceMode` | Created T3 IDs, title, parent/root, depth, workspace mode, initial status, model/effort, pin, and provider/runtime ID when already available |
-| `t3_tasks.list`      | optional `status`                                                                                                              | Compact summaries of direct children created by this orchestrator                                                                            |
-| `t3_tasks.read`      | `threadId`; optional `cursor`, `limit` (1–20)                                                                                  | Bounded messages, current summary, `nextCursor`, live-tail `outputToken`, and truncation flag                                                |
-| `t3_tasks.wait`      | `tasks` (1–4) with `threadId`, optional cursor and `outputToken`; optional `timeoutSeconds` (0–60)                             | Returns on status/output change or timeout, with status, cursors, and output tokens                                                          |
-| `t3_tasks.message`   | `threadId`, `message`                                                                                                          | New projected turn ID and status; rejects a task that is still active                                                                        |
-| `t3_tasks.interrupt` | `threadId`                                                                                                                     | Safe turn-interrupt request; never archives or deletes                                                                                       |
-| `t3_tasks.pin`       | `threadId`, `pinned`                                                                                                           | Persisted pin state                                                                                                                          |
+| Tool                     | Input                                                                                                                                             | Result                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `t3_tasks.create`        | `tasks` (root: 1–10; child: 1–4): `prompt`; optional `title`, `projectId`, `workspacePath`, `model`, `reasoningEffort`, `pinned`, `workspaceMode` | Created T3 IDs, title, parent/root, depth, workspace mode, initial status, model/effort, pin, and provider/runtime ID when already available |
+| `t3_tasks.list`          | optional `status`                                                                                                                                 | Compact summaries of direct children created by this orchestrator                                                                            |
+| `t3_tasks.read`          | `threadId`; optional `cursor`, `limit` (1–20)                                                                                                     | Bounded messages, current summary, `nextCursor`, live-tail `outputToken`, and truncation flag                                                |
+| `t3_tasks.wait`          | `tasks` (1–4) with `threadId`, optional cursor and `outputToken`; optional `timeoutSeconds` (0–60)                                                | Returns on status/output change or timeout, with status, cursors, and output tokens                                                          |
+| `t3_tasks.message`       | `threadId`, `message`                                                                                                                             | New projected turn ID and status; rejects a task that is still active                                                                        |
+| `t3_tasks.interrupt`     | `threadId`                                                                                                                                        | Safe turn-interrupt request; never archives or deletes                                                                                       |
+| `t3_tasks.pin`           | `threadId`, `pinned`                                                                                                                              | Persisted pin state                                                                                                                          |
+| `t3_tasks.orchestration` | `threadId`, `enabled`                                                                                                                             | Root-only enable/disable result for an owned direct child                                                                                    |
 
 `workspaceMode` defaults to `isolated`; `shared` must be explicit. Supplied project and workspace
 values must exactly match the caller's saved project and effective checkout. Example:
@@ -92,15 +94,16 @@ snapshots decode with disabled/null/unpinned defaults.
 
 ## Authorization and limits
 
-Orchestration is disabled by default. The thread header exposes **Allow this thread to create and
-control tasks**. Calls made while disabled return `permission_denied`.
+Root threads allow orchestration by default. Newly created child tasks remain disabled until the
+root enables an owned direct child with `t3_tasks.orchestration`. Calls made while disabled return
+`permission_denied`.
 
 The service accepts only direct child tasks created by the calling orchestrator in the same project.
 Guessed IDs, the caller itself, ancestors, siblings, and unrelated threads return
 `ownership_denied`. Current bounds are:
 
-- maximum batch: 4;
-- maximum active children per root: 4;
+- maximum root create batch and active direct children: 10;
+- maximum depth-1 child create batch and active direct children: 4 per child;
 - maximum relationship depth: 2;
 - maximum wait: 60 seconds;
 - maximum incremental read: 20 messages and 12,000 characters.

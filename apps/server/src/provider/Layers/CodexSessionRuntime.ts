@@ -74,10 +74,11 @@ const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
 
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
-// `V2TurnStartParams` schema includes `collaborationMode` directly.
+// `V2TurnStartParams` schema includes `collaborationMode` and `multiAgentMode` directly.
 const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
+    multiAgentMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__MultiAgentMode),
   }),
 );
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
@@ -102,6 +103,7 @@ export interface CodexSessionRuntimeOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
+  readonly taskOrchestrationEnabled: boolean;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
@@ -126,7 +128,11 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly taskOrchestrationEnabled?: boolean;
 }
+
+export const CODEX_TASK_ORCHESTRATION_MULTI_AGENT_POLICY =
+  "T3 task orchestration is enabled. Delegation must use only the t3_tasks dynamic tool namespace. Provider-native hidden subagent spawning is forbidden: do not call spawn_agent, spawnAgent, or any equivalent provider-native subagent tool. This prohibition applies on every turn, even when the user explicitly requests subagents.";
 
 export interface CodexThreadTurnSnapshot {
   readonly id: TurnId;
@@ -353,6 +359,7 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly taskOrchestrationEnabled: boolean;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -367,6 +374,7 @@ function buildCodexCollaborationMode(input: {
       developer_instructions: buildCodexDeveloperInstructions(input.interactionMode, {
         model,
         reasoningEffort,
+        taskOrchestrationEnabled: input.taskOrchestrationEnabled,
       }),
     },
   };
@@ -384,6 +392,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly taskOrchestrationEnabled?: boolean;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -404,7 +413,12 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    taskOrchestrationEnabled: input.taskOrchestrationEnabled === true,
   });
+  const multiAgentMode: EffectCodexSchema.V2TurnStartParams__MultiAgentMode | undefined =
+    input.taskOrchestrationEnabled === true
+      ? { custom: CODEX_TASK_ORCHESTRATION_MULTI_AGENT_POLICY }
+      : undefined;
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
     threadId: input.threadId,
@@ -416,6 +430,7 @@ export function buildTurnStartParams(input: {
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
+    ...(multiAgentMode ? { multiAgentMode } : {}),
   }).pipe(
     Effect.mapError((cause) =>
       CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
@@ -1324,6 +1339,8 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            taskOrchestrationEnabled:
+              input.taskOrchestrationEnabled ?? options.taskOrchestrationEnabled,
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

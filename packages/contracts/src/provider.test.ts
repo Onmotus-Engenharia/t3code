@@ -35,12 +35,14 @@ describe("ProviderSessionStartInput", () => {
         ],
       },
       runtimeMode: "full-access",
+      taskOrchestrationEnabled: true,
     });
     expect(parsed.runtimeMode).toBe("full-access");
     expect(parsed.modelSelection?.instanceId).toBe("codex");
     expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
     expect(getOptionValue(parsed.modelSelection?.options, "reasoningEffort")).toBe("high");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
+    expect(parsed.taskOrchestrationEnabled).toBe(true);
   });
 
   it("rejects payloads without runtime mode", () => {
@@ -126,12 +128,14 @@ describe("ProviderSendTurnInput", () => {
           { id: "fastMode", value: true },
         ],
       },
+      taskOrchestrationEnabled: false,
     });
 
     expect(parsed.modelSelection?.instanceId).toBe("codex");
     expect(parsed.modelSelection?.model).toBe("gpt-5.3-codex");
     expect(getOptionValue(parsed.modelSelection?.options, "reasoningEffort")).toBe("xhigh");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
+    expect(parsed.taskOrchestrationEnabled).toBe(false);
   });
 
   it("accepts claude modelSelection including ultrathink", () => {

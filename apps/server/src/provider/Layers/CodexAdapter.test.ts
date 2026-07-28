@@ -274,6 +274,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
           { id: "serviceTier", value: "priority" },
         ]),
+        taskOrchestrationEnabled: true,
         runtimeMode: "full-access",
       });
 
@@ -293,6 +294,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         model: "gpt-5.3-codex",
         providerInstanceId: ProviderInstanceId.make("codex"),
         serviceTier: "priority",
+        taskOrchestrationEnabled: true,
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
@@ -358,6 +360,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
             { id: "serviceTier", value: "priority" },
           ]),
           attachments: [],
+          taskOrchestrationEnabled: true,
         }),
       );
 
@@ -366,6 +369,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         model: "gpt-5.3-codex",
         effort: "high",
         serviceTier: "priority",
+        taskOrchestrationEnabled: true,
       });
     }),
   );

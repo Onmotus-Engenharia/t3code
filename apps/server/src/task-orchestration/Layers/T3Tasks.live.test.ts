@@ -80,6 +80,21 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
           },
         ],
       } as unknown as OrchestrationThread;
+      const grandchild = {
+        ...thread({ id: "grandchild", rootThreadId: "root", parentThreadId: "child" }),
+        taskOrchestrationEnabled: false,
+        taskRelation: {
+          parentThreadId: ThreadId.make("child"),
+          rootThreadId: ThreadId.make("root"),
+          depth: 2,
+          workspaceMode: "shared" as const,
+          createdBy: "agent" as const,
+        },
+      } as unknown as OrchestrationThread;
+      const unrelated = {
+        ...thread({ id: "unrelated" }),
+        taskOrchestrationEnabled: true,
+      } as unknown as OrchestrationThread;
       const snapshotRef = yield* Ref.make({
         snapshotSequence: 1,
         projects: [
@@ -94,7 +109,7 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             deletedAt: null,
           },
         ],
-        threads: [caller, child],
+        threads: [caller, child, grandchild, unrelated],
         updatedAt: "2026-07-28T00:00:00.000Z",
       } as unknown as OrchestrationReadModel);
       const commands = yield* Ref.make<Array<OrchestrationCommand>>([]);
@@ -149,9 +164,9 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
         Effect.provideService(ProviderRegistry, providers),
         Effect.provideService(GitWorkflowService, {} as GitWorkflowService["Service"]),
       );
-      const call = (tool: string, args: unknown) =>
+      const callAs = (callerThreadId: string, tool: string, args: unknown) =>
         service.execute({
-          callerThreadId: ThreadId.make("root"),
+          callerThreadId: ThreadId.make(callerThreadId),
           payload: {
             namespace: "t3_tasks",
             tool,
@@ -161,6 +176,7 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             turnId: "provider-turn",
           },
         });
+      const call = (tool: string, args: unknown) => callAs("root", tool, args);
       const body = (response: Awaited<Effect.Success<ReturnType<typeof call>>>) =>
         JSON.parse(
           response.contentItems[0]?.type === "inputText" ? response.contentItems[0].text : "{}",
@@ -179,6 +195,37 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       const listed = yield* call("list", {});
       NodeAssert.equal(listed.success, true);
       NodeAssert.equal((body(listed).tasks as Array<unknown>).length, 1);
+
+      const enabled = yield* call("orchestration", {
+        threadId: "child",
+        enabled: true,
+      });
+      NodeAssert.equal(enabled.success, true);
+      NodeAssert.deepStrictEqual(body(enabled), { threadId: "child", enabled: true });
+      const disabled = yield* call("orchestration", {
+        threadId: "child",
+        enabled: false,
+      });
+      NodeAssert.equal(disabled.success, true);
+      NodeAssert.deepStrictEqual(body(disabled), { threadId: "child", enabled: false });
+
+      for (const threadId of ["grandchild", "unrelated"]) {
+        const rejected = yield* call("orchestration", { threadId, enabled: true });
+        NodeAssert.equal(rejected.success, false);
+        NodeAssert.equal((body(rejected).error as { code?: string }).code, "ownership_denied");
+      }
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "child" ? { ...candidate, taskOrchestrationEnabled: true } : candidate,
+        ),
+      }));
+      const invalidDepth = yield* callAs("child", "orchestration", {
+        threadId: "grandchild",
+        enabled: true,
+      });
+      NodeAssert.equal(invalidDepth.success, false);
+      NodeAssert.equal((body(invalidDepth).error as { code?: string }).code, "depth_limit");
 
       const read = yield* call("read", { threadId: "child", cursor: 0, limit: 1 });
       NodeAssert.equal((body(read).messages as Array<unknown>).length, 1);
@@ -363,6 +410,22 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       );
       NodeAssert.ok(
         dispatched.some((command) => command.type === "thread.pin.set" && !command.pinned),
+      );
+      NodeAssert.ok(
+        dispatched.some(
+          (command) =>
+            command.type === "thread.task-orchestration.set" &&
+            command.threadId === "child" &&
+            command.enabled,
+        ),
+      );
+      NodeAssert.ok(
+        dispatched.some(
+          (command) =>
+            command.type === "thread.task-orchestration.set" &&
+            command.threadId === "child" &&
+            !command.enabled,
+        ),
       );
     }),
   );

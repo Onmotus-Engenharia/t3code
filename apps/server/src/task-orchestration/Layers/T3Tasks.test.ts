@@ -26,6 +26,7 @@ const thread = (input: {
   readonly projectId?: string;
   readonly rootThreadId?: string;
   readonly parentThreadId?: string;
+  readonly depth?: 1 | 2;
 }): OrchestrationThread =>
   ({
     id: ThreadId.make(input.id),
@@ -45,7 +46,7 @@ const thread = (input: {
       ? {
           parentThreadId: ThreadId.make(input.parentThreadId ?? "parent"),
           rootThreadId: ThreadId.make(input.rootThreadId),
-          depth: 1,
+          depth: input.depth ?? 1,
           workspaceMode: "shared",
           createdBy: "agent",
         }
@@ -53,7 +54,7 @@ const thread = (input: {
   }) as unknown as OrchestrationThread;
 
 describe("T3Tasks authorization and advertised limits", () => {
-  it("allows only the caller and descendants of its same-project task root", () => {
+  it("allows only direct children in the caller's project", () => {
     const caller = thread({ id: "child-a", rootThreadId: "root" });
     const direct = thread({
       id: "direct",
@@ -101,18 +102,11 @@ describe("T3Tasks authorization and advertised limits", () => {
     );
   });
 
-  it("treats interrupted tasks as terminal for root concurrency accounting", () => {
+  it("allows ten active direct children under a root and rejects the eleventh", () => {
     const root = thread({ id: "root" });
-    const interrupted = {
-      ...thread({ id: "interrupted", rootThreadId: "root", parentThreadId: "root" }),
-      latestTurn: {
-        turnId: TurnId.make("turn-interrupted"),
-        state: "interrupted",
-      },
-    } as unknown as OrchestrationThread;
-    const active = [1, 2, 3].map((index) =>
+    const active = Array.from({ length: 10 }, (_, index) =>
       thread({
-        id: `active-${index}`,
+        id: `active-${index + 1}`,
         rootThreadId: "root",
         parentThreadId: "root",
       }),
@@ -121,14 +115,123 @@ describe("T3Tasks authorization and advertised limits", () => {
     NodeAssert.equal(
       validateCreateLimits({
         caller: root,
-        threads: [root, interrupted, ...active],
+        threads: [root],
+        requestedCount: 10,
+      }),
+      1,
+    );
+    NodeAssert.throws(
+      () =>
+        validateCreateLimits({
+          caller: root,
+          threads: [root, ...active],
+          requestedCount: 1,
+        }),
+      /limited to 10 active direct children/,
+    );
+  });
+
+  it("allows four active grandchildren per child and rejects the fifth", () => {
+    const root = thread({ id: "root" });
+    const child = thread({
+      id: "child",
+      rootThreadId: "root",
+      parentThreadId: "root",
+    });
+    const grandchildren = Array.from({ length: 4 }, (_, index) =>
+      thread({
+        id: `grandchild-${index + 1}`,
+        rootThreadId: "root",
+        parentThreadId: "child",
+        depth: 2,
+      }),
+    );
+
+    NodeAssert.equal(
+      validateCreateLimits({
+        caller: child,
+        threads: [root, child],
+        requestedCount: 4,
+      }),
+      2,
+    );
+    NodeAssert.throws(
+      () =>
+        validateCreateLimits({
+          caller: child,
+          threads: [root, child, ...grandchildren],
+          requestedCount: 1,
+        }),
+      /limited to 4 active direct children/,
+    );
+  });
+
+  it("gives separate children independent four-grandchild capacity", () => {
+    const root = thread({ id: "root" });
+    const childA = thread({
+      id: "child-a",
+      rootThreadId: "root",
+      parentThreadId: "root",
+    });
+    const childB = thread({
+      id: "child-b",
+      rootThreadId: "root",
+      parentThreadId: "root",
+    });
+    const childAGrandchildren = Array.from({ length: 4 }, (_, index) =>
+      thread({
+        id: `child-a-grandchild-${index + 1}`,
+        rootThreadId: "root",
+        parentThreadId: "child-a",
+        depth: 2,
+      }),
+    );
+
+    NodeAssert.equal(
+      validateCreateLimits({
+        caller: childB,
+        threads: [root, childA, childB, ...childAGrandchildren],
+        requestedCount: 4,
+      }),
+      2,
+    );
+  });
+
+  it("terminal tasks free direct-child capacity", () => {
+    const root = thread({ id: "root" });
+    const terminal = ["completed", "error", "interrupted"].map(
+      (state, index) =>
+        ({
+          ...thread({
+            id: `terminal-${index + 1}`,
+            rootThreadId: "root",
+            parentThreadId: "root",
+          }),
+          latestTurn: {
+            turnId: TurnId.make(`turn-${index + 1}`),
+            state,
+          },
+        }) as unknown as OrchestrationThread,
+    );
+    const active = Array.from({ length: 9 }, (_, index) =>
+      thread({
+        id: `active-${index + 1}`,
+        rootThreadId: "root",
+        parentThreadId: "root",
+      }),
+    );
+
+    NodeAssert.equal(
+      validateCreateLimits({
+        caller: root,
+        threads: [root, ...terminal, ...active],
         requestedCount: 1,
       }),
       1,
     );
   });
 
-  it("advertises the four-task batch and sixty-second wait caps", () => {
+  it("advertises root create, child wait, and orchestration controls", () => {
     const namespace = T3_TASK_DYNAMIC_TOOLS[0];
     NodeAssert.equal(namespace?.type, "namespace");
     if (namespace?.type !== "namespace") return;
@@ -137,7 +240,7 @@ describe("T3Tasks authorization and advertised limits", () => {
     const createSchema = create?.inputSchema as
       | { properties?: { tasks?: { maxItems?: number } } }
       | undefined;
-    NodeAssert.equal(createSchema?.properties?.tasks?.maxItems, 4);
+    NodeAssert.equal(createSchema?.properties?.tasks?.maxItems, 10);
     const createTaskSchema = (
       create?.inputSchema as
         | {
@@ -159,29 +262,40 @@ describe("T3Tasks authorization and advertised limits", () => {
       | { properties?: { timeoutSeconds?: { maximum?: number } } }
       | undefined;
     NodeAssert.equal(waitSchema?.properties?.timeoutSeconds?.maximum, 60);
+    const orchestration = namespace.tools.find((tool) => tool.name === "orchestration");
+    const orchestrationSchema = orchestration?.inputSchema as
+      | {
+          required?: ReadonlyArray<string>;
+          properties?: { enabled?: { type?: string } };
+        }
+      | undefined;
+    NodeAssert.deepStrictEqual(orchestrationSchema?.required, ["threadId", "enabled"]);
+    NodeAssert.equal(orchestrationSchema?.properties?.enabled?.type, "boolean");
   });
 
-  it("rejects invalid create batches, depth-three recursion, and more than four active tasks", () => {
+  it("rejects invalid caller-level batches and depth-three recursion", () => {
     const root = thread({ id: "root" });
     NodeAssert.throws(
       () => validateCreateLimits({ caller: root, threads: [root], requestedCount: 0 }),
-      /one to four/,
+      /one to 10/,
     );
     NodeAssert.throws(
-      () => validateCreateLimits({ caller: root, threads: [root], requestedCount: 5 }),
-      /one to four/,
+      () => validateCreateLimits({ caller: root, threads: [root], requestedCount: 11 }),
+      /one to 10/,
     );
 
-    const depthTwo = {
-      ...thread({ id: "depth-two", rootThreadId: "root", parentThreadId: "depth-one" }),
-      taskRelation: {
-        parentThreadId: ThreadId.make("depth-one"),
-        rootThreadId: ThreadId.make("root"),
-        depth: 2,
-        workspaceMode: "shared" as const,
-        createdBy: "agent" as const,
-      },
-    } as OrchestrationThread;
+    const child = thread({ id: "child", rootThreadId: "root", parentThreadId: "root" });
+    NodeAssert.throws(
+      () => validateCreateLimits({ caller: child, threads: [root, child], requestedCount: 5 }),
+      /one to 4/,
+    );
+
+    const depthTwo = thread({
+      id: "depth-two",
+      rootThreadId: "root",
+      parentThreadId: "depth-one",
+      depth: 2,
+    });
     NodeAssert.throws(
       () =>
         validateCreateLimits({
@@ -190,31 +304,6 @@ describe("T3Tasks authorization and advertised limits", () => {
           requestedCount: 1,
         }),
       /depth cannot exceed 2/i,
-    );
-
-    const active = [1, 2, 3].map((index) =>
-      thread({
-        id: `active-${index}`,
-        rootThreadId: "root",
-        parentThreadId: "root",
-      }),
-    );
-    NodeAssert.throws(
-      () =>
-        validateCreateLimits({
-          caller: root,
-          threads: [root, ...active],
-          requestedCount: 2,
-        }),
-      /limited to 4 active children/,
-    );
-    NodeAssert.equal(
-      validateCreateLimits({
-        caller: root,
-        threads: [root, ...active],
-        requestedCount: 1,
-      }),
-      1,
     );
   });
 

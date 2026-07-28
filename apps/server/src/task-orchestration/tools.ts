@@ -31,12 +31,12 @@ export const T3_TASK_DYNAMIC_TOOLS: ReadonlyArray<V2ThreadStartParams__DynamicTo
     tools: [
       functionTool(
         "create",
-        "Create up to four child tasks and start their initial turns.",
+        "Create direct child tasks and start their initial turns. Root orchestrators may create up to ten; enabled depth-1 children may create up to four.",
         {
           tasks: {
             type: "array",
             minItems: 1,
-            maxItems: 4,
+            maxItems: 10,
             items: {
               type: "object",
               additionalProperties: false,
@@ -115,6 +115,15 @@ export const T3_TASK_DYNAMIC_TOOLS: ReadonlyArray<V2ThreadStartParams__DynamicTo
           pinned: { type: "boolean" },
         },
         ["threadId", "pinned"],
+      ),
+      functionTool(
+        "orchestration",
+        "Enable or disable task orchestration on an owned direct child. Only a root orchestrator may use this operation.",
+        {
+          threadId: { type: "string", minLength: 1 },
+          enabled: { type: "boolean" },
+        },
+        ["threadId", "enabled"],
       ),
     ],
   },
