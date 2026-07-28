@@ -18,7 +18,9 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import { makeCachedVcsRefsChanges } from "./vcs.ts";
+import { AtomRegistry } from "effect/unstable/reactivity";
+
+import { makeCachedVcsRefsChanges, makeVcsRefsInvalidation } from "./vcs.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -89,6 +91,26 @@ function cacheWithRefs(refs: Option.Option<VcsListRefsResult>) {
 }
 
 describe("cached VCS refs", () => {
+  it("invalidates all ref streams in the mutated environment", () => {
+    const registry = AtomRegistry.make();
+    const invalidation = makeVcsRefsInvalidation();
+    const environment = {
+      environmentId: TARGET.environmentId,
+    };
+    const otherEnvironment = {
+      environmentId: EnvironmentId.make("environment-2"),
+    };
+
+    expect(registry.get(invalidation.revisionAtom(environment))).toBe(0);
+    expect(registry.get(invalidation.revisionAtom(otherEnvironment))).toBe(0);
+
+    invalidation.invalidate(registry, environment);
+
+    expect(registry.get(invalidation.revisionAtom(environment))).toBe(1);
+    expect(registry.get(invalidation.revisionAtom(otherEnvironment))).toBe(0);
+    registry.dispose();
+  });
+
   it.effect("loads an unfiltered branch list without a connection", () =>
     Effect.scoped(
       Effect.gen(function* () {
