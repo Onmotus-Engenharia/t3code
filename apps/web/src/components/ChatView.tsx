@@ -5725,10 +5725,10 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
-            taskOrchestrationEnabled={activeThreadShell?.taskOrchestrationEnabled ?? false}
+            taskOrchestrationEnabled={activeThreadShell?.taskOrchestrationEnabled ?? true}
             taskOrchestrationPending={taskOrchestrationPending}
             taskRelation={activeThreadShell?.taskRelation ?? null}
-            showTaskOrchestrationControl={isServerThread}
+            showTaskOrchestrationControl
             onSetTaskOrchestrationEnabled={handleSetTaskOrchestrationEnabled}
             onOpenParentThread={handleOpenParentThread}
             onNewThreadInProject={handleNewThreadInActiveProject}

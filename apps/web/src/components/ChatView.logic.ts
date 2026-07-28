@@ -85,7 +85,7 @@ export function buildLocalDraftThread(
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
-    taskOrchestrationEnabled: false,
+    taskOrchestrationEnabled: true,
     taskRelation: null,
     pinned: false,
     deletedAt: null,

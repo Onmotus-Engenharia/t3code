@@ -93,6 +93,32 @@ function taskCreate(
 }
 
 it.layer(NodeServices.layer)("task orchestration decider", (it) => {
+  it.effect("enables task orchestration for new user threads by default", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread"),
+          threadId: ThreadId.make("thread"),
+          projectId,
+          title: "Thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+        readModel: makeReadModel(false),
+      });
+      expect(Array.isArray(event)).toBe(false);
+      if (!("type" in event) || event.type !== "thread.created") {
+        return yield* Effect.die("Expected one thread.created event");
+      }
+      expect(event.payload.taskOrchestrationEnabled).toBe(true);
+    }),
+  );
+
   it.effect("creates an agent-owned child with permission and safe child defaults", () =>
     Effect.gen(function* () {
       const event = yield* decideOrchestrationCommand({

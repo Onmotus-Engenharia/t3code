@@ -372,7 +372,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
-          taskOrchestrationEnabled: false,
+          taskOrchestrationEnabled: true,
           taskRelation: null,
           pinned: false,
           createdAt: command.createdAt,
