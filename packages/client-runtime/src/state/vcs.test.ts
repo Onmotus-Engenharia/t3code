@@ -254,10 +254,12 @@ describe("VCS refs atom lifecycle", () => {
   const waitFor = Effect.fn("VcsRefsLifecycleTest.waitFor")(function* (predicate: () => boolean) {
     for (let attempt = 0; attempt < 500; attempt += 1) {
       if (predicate()) return;
-      yield* Effect.sleep(1);
+      yield* TestClock.withLive(Effect.sleep(1));
     }
     return yield* Effect.die("Timed out waiting for VCS refs lifecycle condition.");
   });
+
+  const liveSleep = (millis: number) => TestClock.withLive(Effect.sleep(millis));
 
   const makeLifecycleHarness = Effect.fn("VcsRefsLifecycleTest.makeHarness")(function* (
     revalidateInterval = 60,
@@ -344,9 +346,9 @@ describe("VCS refs atom lifecycle", () => {
       const unmount = harness.registry.mount(atom);
 
       yield* waitFor(() => harness.calls.length === 1);
-      yield* Effect.sleep(25);
+      yield* liveSleep(25);
       expect(harness.calls).toHaveLength(1);
-      yield* Effect.sleep(50);
+      yield* liveSleep(50);
       expect(harness.calls).toHaveLength(2);
 
       unmount();
@@ -368,15 +370,15 @@ describe("VCS refs atom lifecycle", () => {
       const unmountFirst = harness.registry.mount(first);
       const unmountSecond = harness.registry.mount(second);
       yield* waitFor(() => harness.calls.length === 1);
-      yield* Effect.sleep(75);
+      yield* liveSleep(75);
       expect(harness.calls).toHaveLength(2);
 
       unmountFirst();
-      yield* Effect.sleep(75);
+      yield* liveSleep(75);
       expect(harness.calls).toHaveLength(3);
       unmountSecond();
       const stoppedAt = harness.calls.length;
-      yield* Effect.sleep(75);
+      yield* liveSleep(75);
       expect(harness.calls).toHaveLength(stoppedAt);
       harness.registry.dispose();
     }),
@@ -395,7 +397,7 @@ describe("VCS refs atom lifecycle", () => {
       yield* waitFor(() => harness.calls.length === 1 && harness.cachedRefs.size === 1);
       unmount();
       const stoppedAt = harness.calls.length;
-      yield* Effect.sleep(75);
+      yield* liveSleep(75);
       expect(harness.calls).toHaveLength(stoppedAt);
 
       yield* SubscriptionRef.set(
@@ -431,7 +433,7 @@ describe("VCS refs atom lifecycle", () => {
       unmountSecond();
       const unmountThird = harness.registry.mount(third);
       yield* waitFor(() => harness.calls.length === 3);
-      yield* Effect.sleep(125);
+      yield* liveSleep(125);
 
       expect(harness.calls).toHaveLength(4);
       expect(harness.callsFor(TARGET.environmentId, { query: "first" })).toBe(1);
@@ -455,12 +457,12 @@ describe("VCS refs atom lifecycle", () => {
 
       const state = harness.states.get(TARGET.environmentId)!;
       yield* SubscriptionRef.set(state, AVAILABLE_CONNECTION_STATE);
-      yield* Effect.sleep(75);
+      yield* liveSleep(75);
       expect(harness.calls).toHaveLength(1);
 
       yield* SubscriptionRef.set(state, { ...CONNECTED_CONNECTION_STATE, generation: 2 });
       yield* waitFor(() => harness.calls.length === 2);
-      yield* Effect.sleep(75);
+      yield* liveSleep(75);
       expect(harness.calls).toHaveLength(3);
 
       unmount();
@@ -479,12 +481,12 @@ describe("VCS refs atom lifecycle", () => {
       const unmountFirst = harness.registry.mount(first);
       const unmountSecond = harness.registry.mount(second);
       yield* waitFor(() => harness.calls.length === 2);
-      yield* Effect.sleep(75);
+      yield* liveSleep(75);
       expect(harness.callsFor(TARGET.environmentId)).toBe(2);
       expect(harness.callsFor(SECOND_TARGET.environmentId)).toBe(2);
 
       unmountFirst();
-      yield* Effect.sleep(75);
+      yield* liveSleep(75);
       expect(harness.callsFor(TARGET.environmentId)).toBe(2);
       expect(harness.callsFor(SECOND_TARGET.environmentId)).toBe(3);
 
