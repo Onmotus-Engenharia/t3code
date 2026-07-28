@@ -6,6 +6,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
+  ClientOrchestrationCommand,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
@@ -51,8 +52,115 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+
+it.effect("defaults task orchestration metadata on historical thread payloads", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadCreatedPayload({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Historical thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.taskOrchestrationEnabled, false);
+    assert.strictEqual(parsed.taskRelation, null);
+    assert.strictEqual(parsed.pinned, false);
+  }),
+);
+
+it.effect("keeps agent task creation internal while accepting public metadata commands", () =>
+  Effect.gen(function* () {
+    const taskCreate = {
+      type: "thread.task.create",
+      commandId: "cmd-task",
+      threadId: "child",
+      projectId: "project-1",
+      title: "Child",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      taskRelation: {
+        parentThreadId: "parent",
+        rootThreadId: "parent",
+        depth: 1,
+        workspaceMode: "shared",
+        createdBy: "agent",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const internal = yield* decodeOrchestrationCommand(taskCreate);
+    assert.strictEqual(internal.type, "thread.task.create");
+    assert.strictEqual(
+      (yield* Effect.exit(decodeClientOrchestrationCommand(taskCreate)))._tag,
+      "Failure",
+    );
+
+    const permission = yield* decodeClientOrchestrationCommand({
+      type: "thread.task-orchestration.set",
+      commandId: "cmd-enable",
+      threadId: "parent",
+      enabled: true,
+    });
+    assert.strictEqual(permission.type, "thread.task-orchestration.set");
+
+    const pin = yield* decodeClientOrchestrationCommand({
+      type: "thread.pin.set",
+      commandId: "cmd-pin",
+      threadId: "parent",
+      pinned: true,
+    });
+    assert.strictEqual(pin.type, "thread.pin.set");
+  }),
+);
+
+it.effect("decodes task orchestration and pin domain events", () =>
+  Effect.gen(function* () {
+    const base = {
+      sequence: 1,
+      eventId: "event-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "command-1",
+      causationEventId: null,
+      correlationId: "command-1",
+      metadata: {},
+    };
+    const permission = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.task-orchestration-set",
+      payload: {
+        threadId: "thread-1",
+        enabled: true,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(permission.type, "thread.task-orchestration-set");
+
+    const pin = yield* decodeOrchestrationEvent({
+      ...base,
+      eventId: "event-2",
+      type: "thread.pin-set",
+      payload: {
+        threadId: "thread-1",
+        pinned: true,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(pin.type, "thread.pin-set");
+  }),
+);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {

@@ -1,4 +1,8 @@
 export const BRAND_ASSET_PATHS = {
+  orchestratorIconComposerProject: "assets/orchestrator/app-icon.icon",
+  orchestratorMacIconPng: "assets/orchestrator/orchestrator-macos-1024.png",
+  orchestratorLinuxIconPng: "assets/orchestrator/orchestrator-universal-1024.png",
+  orchestratorWindowsIconIco: "assets/orchestrator/orchestrator-windows.ico",
   developmentIconComposerProject: "assets/dev/app-icon.icon",
   developmentIosIconPng: "assets/dev/blueprint-ios-1024.png",
   developmentUniversalIconPng: "assets/dev/blueprint-universal-1024.png",

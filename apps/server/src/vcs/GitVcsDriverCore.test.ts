@@ -38,6 +38,21 @@ const makeNonRepositoryHandle = () =>
     getOutputFd: () => Stream.empty,
   });
 
+const makeSuccessfulHandle = (stdout: string) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.encodeText(Stream.make(stdout)),
+    stderr: Stream.empty,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+
 const makeTmpDir = (
   prefix = "git-vcs-driver-test-",
 ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> =>
@@ -130,6 +145,56 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
       { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
       { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
       { args: ["branch", "--no-color", "--no-column"], lcAll: "C" },
+    ]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("bounds one listRefs call to six Git processes", () => {
+  const commands: string[] = [];
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      const args = command.args.join(" ");
+      commands.push(args);
+      const stdout =
+        args === "branch --no-color --no-column"
+          ? "* main\n"
+          : args === "branch --no-color --no-column --remotes"
+            ? "origin/main\n"
+            : args === "remote"
+              ? "origin\n"
+              : args === "symbolic-ref refs/remotes/origin/HEAD"
+                ? "refs/remotes/origin/main\n"
+                : args.startsWith("for-each-ref ")
+                  ? "main\t123\norigin/main\t123\n"
+                  : "";
+      return makeSuccessfulHandle(stdout);
+    }),
+  );
+  const nodeServicesLayer = Layer.merge(
+    NodeServices.layer,
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  );
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(nodeServicesLayer),
+  );
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const result = yield* driver.listRefs({ cwd: "/repo", limit: 100 });
+
+    assert.equal(result.isRepo, true);
+    assert.equal(result.refs[0]?.name, "main");
+    assert.deepStrictEqual(commands.toSorted(), [
+      "branch --no-color --no-column",
+      "branch --no-color --no-column --remotes",
+      "for-each-ref --format=%(refname:short)%09%(committerdate:unix) refs/heads refs/remotes",
+      "remote",
+      "symbolic-ref refs/remotes/origin/HEAD",
+      "worktree list --porcelain",
     ]);
   }).pipe(Effect.provide(layer));
 });

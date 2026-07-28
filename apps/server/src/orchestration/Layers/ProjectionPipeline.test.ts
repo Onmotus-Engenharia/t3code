@@ -102,6 +102,9 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          taskOrchestrationEnabled: true,
+          taskRelation: null,
+          pinned: true,
           createdAt: now,
           updatedAt: now,
         },
@@ -144,6 +147,24 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.deepEqual(projectRows, [
         { projectId: "project-1", title: "Project 1", scriptsJson: "[]" },
+      ]);
+
+      const taskMetadataRows = yield* sql<{
+        readonly enabled: number;
+        readonly relation: string | null;
+        readonly parentId: string | null;
+        readonly pinned: number;
+      }>`
+        SELECT
+          task_orchestration_enabled AS enabled,
+          task_relation_json AS relation,
+          task_parent_thread_id AS parentId,
+          pinned
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(taskMetadataRows, [
+        { enabled: 1, relation: null, parentId: null, pinned: 1 },
       ]);
 
       const messageRows = yield* sql<{
@@ -1772,6 +1793,28 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           },
         });
 
+        yield* appendAndProject({
+          type: "thread.turn-diff-completed",
+          eventId: EventId.make("evt-conflict-6"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-conflict"),
+          occurredAt: "2026-02-26T13:00:05.000Z",
+          commandId: CommandId.make("cmd-conflict-6"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-conflict-6"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-conflict"),
+            turnId: TurnId.make("turn-interrupted"),
+            checkpointTurnCount: 2,
+            checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-conflict/turn/2"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("assistant-interrupted"),
+            completedAt: "2026-02-26T13:00:05.000Z",
+          },
+        });
+
         const turnRows = yield* sql<{
           readonly turnId: string;
           readonly checkpointTurnCount: number | null;
@@ -1793,7 +1836,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
         assert.deepEqual(turnRows, [
           { turnId: "turn-completed", checkpointTurnCount: 1, status: "completed" },
-          { turnId: "turn-interrupted", checkpointTurnCount: null, status: "interrupted" },
+          { turnId: "turn-interrupted", checkpointTurnCount: 2, status: "interrupted" },
         ]);
       }),
   );

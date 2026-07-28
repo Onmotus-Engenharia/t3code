@@ -7,6 +7,21 @@ export interface PngIconImage {
   readonly contents: Buffer;
 }
 
+export interface PngIcnsImage {
+  readonly type:
+    | "ic04"
+    | "ic05"
+    | "ic07"
+    | "ic08"
+    | "ic09"
+    | "ic10"
+    | "ic11"
+    | "ic12"
+    | "ic13"
+    | "ic14";
+  readonly contents: Buffer;
+}
+
 export function readPngDimensions(contents: Buffer): {
   readonly width: number;
   readonly height: number;
@@ -69,4 +84,36 @@ export function encodePngIco(images: ReadonlyArray<PngIconImage>): Buffer {
   });
 
   return Buffer.concat([header, ...images.map((image) => image.contents)]);
+}
+
+/** Encodes PNG renditions into the modern chunks accepted by macOS ICNS readers. */
+export function encodePngIcns(images: ReadonlyArray<PngIcnsImage>): Buffer {
+  if (images.length === 0) {
+    throw new Error("An ICNS file requires at least one PNG rendition.");
+  }
+
+  const seenTypes = new Set<string>();
+  const chunks = images.map((image) => {
+    if (seenTypes.has(image.type)) {
+      throw new Error(`ICNS rendition ${image.type} was provided more than once.`);
+    }
+    if (
+      image.contents.length < PNG_SIGNATURE.length ||
+      !image.contents.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+    ) {
+      throw new Error(`ICNS rendition ${image.type} is not PNG encoded.`);
+    }
+    seenTypes.add(image.type);
+
+    const chunk = Buffer.alloc(8 + image.contents.length);
+    chunk.write(image.type, 0, 4, "ascii");
+    chunk.writeUInt32BE(chunk.length, 4);
+    image.contents.copy(chunk, 8);
+    return chunk;
+  });
+
+  const header = Buffer.alloc(8);
+  header.write("icns", 0, 4, "ascii");
+  header.writeUInt32BE(header.length + chunks.reduce((sum, chunk) => sum + chunk.length, 0), 4);
+  return Buffer.concat([header, ...chunks]);
 }

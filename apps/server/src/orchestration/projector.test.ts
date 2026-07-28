@@ -93,6 +93,9 @@ describe("orchestration projector", () => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        taskOrchestrationEnabled: false,
+        taskRelation: null,
+        pinned: false,
         deletedAt: null,
         messages: [],
         proposedPlans: [],
@@ -101,6 +104,153 @@ describe("orchestration projector", () => {
         session: null,
       },
     ]);
+  });
+
+  it("preserves an interrupted latest turn when its checkpoint arrives late", async () => {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const events: ReadonlyArray<OrchestrationEvent> = [
+      makeEvent({
+        sequence: 1,
+        type: "thread.created",
+        aggregateKind: "thread",
+        aggregateId: "thread-interrupted",
+        occurredAt: createdAt,
+        commandId: "cmd-create",
+        payload: {
+          threadId: "thread-interrupted",
+          projectId: "project-1",
+          title: "interrupted",
+          modelSelection: {
+            provider: ProviderDriverKind.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      }),
+      makeEvent({
+        sequence: 2,
+        type: "thread.session-set",
+        aggregateKind: "thread",
+        aggregateId: "thread-interrupted",
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: "cmd-running",
+        payload: {
+          threadId: "thread-interrupted",
+          session: {
+            threadId: "thread-interrupted",
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-1",
+            lastError: null,
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+        },
+      }),
+      makeEvent({
+        sequence: 3,
+        type: "thread.turn-interrupt-requested",
+        aggregateKind: "thread",
+        aggregateId: "thread-interrupted",
+        occurredAt: "2026-01-01T00:00:02.000Z",
+        commandId: "cmd-interrupt",
+        payload: {
+          threadId: "thread-interrupted",
+          turnId: "turn-1",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 4,
+        type: "thread.turn-diff-completed",
+        aggregateKind: "thread",
+        aggregateId: "thread-interrupted",
+        occurredAt: "2026-01-01T00:00:03.000Z",
+        commandId: "cmd-checkpoint",
+        payload: {
+          threadId: "thread-interrupted",
+          turnId: "turn-1",
+          checkpointTurnCount: 1,
+          checkpointRef: "refs/t3/checkpoints/thread-interrupted/turn/1",
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-01-01T00:00:03.000Z",
+        },
+      }),
+    ];
+
+    let model = createEmptyReadModel(createdAt);
+    for (const event of events) {
+      model = await Effect.runPromise(projectEvent(model, event));
+    }
+
+    expect(model.threads[0]?.latestTurn?.state).toBe("interrupted");
+  });
+
+  it("projects task orchestration permission and pin metadata independently", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    const enabled = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.task-orchestration-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-enable",
+          payload: { threadId: "thread-1", enabled: true, updatedAt: now },
+        }),
+      ),
+    );
+    const pinned = await Effect.runPromise(
+      projectEvent(
+        enabled,
+        makeEvent({
+          sequence: 3,
+          type: "thread.pin-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-pin",
+          payload: { threadId: "thread-1", pinned: true, updatedAt: now },
+        }),
+      ),
+    );
+
+    expect(pinned.threads[0]?.taskOrchestrationEnabled).toBe(true);
+    expect(pinned.threads[0]?.pinned).toBe(true);
+    expect(pinned.threads[0]?.settledOverride).toBe(null);
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {

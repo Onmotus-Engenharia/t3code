@@ -462,10 +462,11 @@ export function firstValidTimestamp(
 // the screen only moves at lifecycle transitions. Status (including pending
 // approval) is carried by each card's edge strip, not by position.
 export function sortThreadsForSidebarV2<
-  T extends { readonly id: string; readonly createdAt: string },
+  T extends { readonly id: string; readonly createdAt: string; readonly pinned?: boolean },
 >(threads: readonly T[]): T[] {
   return [...threads].toSorted(
     (left, right) =>
+      Number(right.pinned === true) - Number(left.pinned === true) ||
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
       left.id.localeCompare(right.id),
   );
@@ -505,14 +506,17 @@ export function resolveSettledTimestamp(thread: SettledTimestampInput): string |
 // Settled rows are history, so they order by when the work ENDED, not when
 // the thread was created or last touched.
 export function sortSettledThreadsForSidebarV2<
-  T extends SettledTimestampInput & { readonly id: string },
+  T extends SettledTimestampInput & { readonly id: string; readonly pinned?: boolean },
 >(threads: readonly T[]): T[] {
   const timestampMs = (thread: T) => {
     const timestamp = resolveSettledTimestamp(thread);
     return timestamp === null ? 0 : Date.parse(timestamp);
   };
   return [...threads].toSorted(
-    (left, right) => timestampMs(right) - timestampMs(left) || left.id.localeCompare(right.id),
+    (left, right) =>
+      Number(right.pinned === true) - Number(left.pinned === true) ||
+      timestampMs(right) - timestampMs(left) ||
+      left.id.localeCompare(right.id),
   );
 }
 

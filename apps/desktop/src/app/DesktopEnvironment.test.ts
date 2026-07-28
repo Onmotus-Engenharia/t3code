@@ -67,8 +67,8 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.appRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
-      assert.equal(environment.linuxWmClass, "t3code-dev");
+      assert.equal(environment.appUserModelId, "dev.mateuslucas.t3code.orchestrator");
+      assert.equal(environment.linuxWmClass, "t3-code-orchestrator-dev");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),
         Option.some("http://localhost:5173/"),
@@ -106,12 +106,12 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
-      assert.equal(development.stateDir, "/Users/alice/.t3/dev");
-      assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
+      assert.equal(development.stateDir, "/Users/alice/.t3-code-orchestrator/dev");
+      assert.equal(production.stateDir, "/Users/alice/.t3-code-orchestrator/userdata");
     }),
   );
 
-  it.effect("uses a configured app user model id override", () =>
+  it.effect("supports a worktree-specific development app user model id", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},
@@ -122,6 +122,24 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev.local");
+    }),
+  );
+
+  it.effect("ignores upstream T3CODE_HOME in packaged builds", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { isPackaged: true },
+        {
+          T3CODE_HOME: "/Users/alice/.t3",
+          T3CODE_ORCHESTRATOR_HOME: "/tmp/orchestrator",
+        },
+      );
+
+      assert.equal(environment.baseDir, "/tmp/orchestrator");
+      assert.equal(environment.stateDir, "/tmp/orchestrator/userdata");
+      assert.equal(environment.cacheDir, "/tmp/orchestrator/cache");
+      assert.equal(environment.lockDir, "/tmp/orchestrator/userdata/locks");
+      assert.equal(environment.logDir, "/tmp/orchestrator/userdata/logs");
     }),
   );
 

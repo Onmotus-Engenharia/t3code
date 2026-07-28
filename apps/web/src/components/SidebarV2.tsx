@@ -28,12 +28,14 @@ import {
   GitBranchIcon,
   EllipsisIcon,
   MessageSquareIcon,
+  PinIcon,
   PlusIcon,
   SearchIcon,
   ServerIcon,
   SquarePenIcon,
   Trash2Icon,
   Undo2Icon,
+  WorkflowIcon,
 } from "lucide-react";
 import {
   memo,
@@ -216,6 +218,29 @@ function WorkingDuration(props: { startedAt: string | null }) {
   return <span className="tabular-nums">{formatWorkingDurationLabel(Date.now() - startedMs)}</span>;
 }
 
+function ThreadOrchestrationBadges(props: { thread: SidebarThreadSummary }) {
+  const { thread } = props;
+  if (thread.taskRelation === null && !thread.pinned) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground/70">
+      {thread.taskRelation !== null ? (
+        <WorkflowIcon
+          aria-label="Orchestrated task"
+          data-testid="orchestrated-task-indicator"
+          className="size-3.5"
+        />
+      ) : null}
+      {thread.pinned ? (
+        <PinIcon
+          aria-label="Pinned thread"
+          data-testid="pinned-thread-indicator"
+          className="size-3.5"
+        />
+      ) : null}
+    </span>
+  );
+}
+
 function SidebarV2ThreadTooltip({
   thread,
   projectTitle,
@@ -271,6 +296,20 @@ function SidebarV2ThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 truncate text-foreground/75">{thread.branch}</div>
+            </div>
+          ) : null}
+          {thread.taskRelation !== null ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <WorkflowIcon className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 truncate text-foreground/75">
+                Orchestrated task · parent {thread.taskRelation.parentThreadId}
+              </div>
+            </div>
+          ) : null}
+          {thread.pinned ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <PinIcon className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 truncate text-foreground/75">Pinned</div>
             </div>
           ) : null}
           {branchMismatch ? (
@@ -769,6 +808,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            <ThreadOrchestrationBadges thread={thread} />
             {title}
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
@@ -945,7 +985,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">{title}</div>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <ThreadOrchestrationBadges thread={thread} />
+              {title}
+            </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
               {thread.branch ? (
                 <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
@@ -1011,6 +1054,9 @@ export default function SidebarV2() {
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
     useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const setThreadPin = useAtomCommand(threadEnvironment.setPin, {
     reportFailure: false,
   });
   const deleteProject = useAtomCommand(projectEnvironment.delete, {
@@ -1414,8 +1460,9 @@ export default function SidebarV2() {
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>
+          Number(right.pinned) - Number(left.pinned) ||
           firstValidTimestampMs(left.snoozedUntil ?? null) -
-          firstValidTimestampMs(right.snoozedUntil ?? null),
+            firstValidTimestampMs(right.snoozedUntil ?? null),
       ),
       settledThreads: sortSettledThreadsForSidebarV2(settled),
       snoozeNow: preciseNow,
@@ -2023,6 +2070,7 @@ export default function SidebarV2() {
                         },
                   ]
                 : []),
+              { id: "pin", label: thread.pinned ? "Unpin thread" : "Pin thread" },
               { id: "rename", label: "Rename thread" },
               { id: "mark-unread", label: "Mark unread" },
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
@@ -2071,6 +2119,23 @@ export default function SidebarV2() {
           case "unsnooze":
             attemptUnsnooze(threadRef);
             return;
+          case "pin": {
+            const result = await setThreadPin({
+              environmentId: threadRef.environmentId,
+              input: { threadId: threadRef.threadId, pinned: !thread.pinned },
+            });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to update pin",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
           case "rename":
             startThreadRename(threadRef, thread.title);
             return;
@@ -2118,6 +2183,7 @@ export default function SidebarV2() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       serverConfigs,
+      setThreadPin,
       startThreadRename,
     ],
   );

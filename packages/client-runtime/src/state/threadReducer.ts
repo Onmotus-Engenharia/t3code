@@ -76,6 +76,9 @@ export function applyThreadDetailEvent(
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          taskOrchestrationEnabled: event.payload.taskOrchestrationEnabled,
+          taskRelation: event.payload.taskRelation,
+          pinned: event.payload.pinned,
           deletedAt: null,
           messages: [],
           proposedPlans: [],
@@ -182,6 +185,26 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           interactionMode: event.payload.interactionMode,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.task-orchestration-set":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          taskOrchestrationEnabled: event.payload.enabled,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.pin-set":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinned: event.payload.pinned,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -329,23 +352,26 @@ export function applyThreadDetailEvent(
       const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
       const latestTurn: OrchestrationLatestTurn | null =
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
-          ? {
-              turnId: event.payload.session.activeTurnId,
-              state: "running",
-              requestedAt:
-                thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                  ? thread.latestTurn.requestedAt
-                  : event.payload.session.updatedAt,
-              startedAt:
-                thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                  ? (thread.latestTurn.startedAt ?? event.payload.session.updatedAt)
-                  : event.payload.session.updatedAt,
-              completedAt: null,
-              assistantMessageId:
-                thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                  ? thread.latestTurn.assistantMessageId
-                  : null,
-            }
+          ? thread.latestTurn?.turnId === event.payload.session.activeTurnId &&
+            thread.latestTurn.state === "interrupted"
+            ? thread.latestTurn
+            : {
+                turnId: event.payload.session.activeTurnId,
+                state: "running",
+                requestedAt:
+                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
+                    ? thread.latestTurn.requestedAt
+                    : event.payload.session.updatedAt,
+                startedAt:
+                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
+                    ? (thread.latestTurn.startedAt ?? event.payload.session.updatedAt)
+                    : event.payload.session.updatedAt,
+                completedAt: null,
+                assistantMessageId:
+                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
+                    ? thread.latestTurn.assistantMessageId
+                    : null,
+              }
           : thread.latestTurn !== null &&
               thread.latestTurn.state === "running" &&
               settledTurnState !== null
@@ -439,7 +465,11 @@ export function applyThreadDetailEvent(
         (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
               turnId: event.payload.turnId,
-              state: checkpointStatusToTurnState(event.payload.status),
+              state:
+                thread.latestTurn?.turnId === event.payload.turnId &&
+                thread.latestTurn.state === "interrupted"
+                  ? "interrupted"
+                  : checkpointStatusToTurnState(event.payload.status),
               requestedAt: thread.latestTurn?.requestedAt ?? event.payload.completedAt,
               startedAt: thread.latestTurn?.startedAt ?? event.payload.completedAt,
               completedAt: event.payload.completedAt,

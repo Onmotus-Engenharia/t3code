@@ -74,6 +74,7 @@ function makeEnvironmentLayer(
         NodeServices.layer,
         DesktopConfig.layerTest({
           T3CODE_HOME: baseDir,
+          T3CODE_ORCHESTRATOR_HOME: baseDir,
           T3CODE_PORT: "9999",
           T3CODE_MODE: "desktop",
           T3CODE_DESKTOP_LAN_HOST: "192.168.1.50",
@@ -135,6 +136,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.cwd, environment.backendCwd);
         assert.equal(first.captureOutput, true);
         assert.equal(first.env.ELECTRON_RUN_AS_NODE, "1");
+        assert.isUndefined(first.env.T3CODE_HOME);
         assert.isUndefined(first.env.T3CODE_PORT);
         assert.isUndefined(first.env.T3CODE_MODE);
         assert.isUndefined(first.env.T3CODE_DESKTOP_LAN_HOST);

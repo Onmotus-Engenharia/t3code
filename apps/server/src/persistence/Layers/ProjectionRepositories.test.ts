@@ -20,6 +20,53 @@ const projectionRepositoriesLayer = it.layer(
 );
 
 projectionRepositoriesLayer("Projection repositories", (it) => {
+  it.effect("round-trips task orchestration metadata", () =>
+    Effect.gen(function* () {
+      const threads = yield* ProjectionThreadRepository;
+      const relation = {
+        parentThreadId: ThreadId.make("parent"),
+        rootThreadId: ThreadId.make("root"),
+        depth: 2,
+        workspaceMode: "isolated" as const,
+        createdBy: "agent" as const,
+      };
+      yield* threads.upsert({
+        threadId: ThreadId.make("child"),
+        projectId: ProjectId.make("project-1"),
+        title: "Child",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        latestTurnId: null,
+        createdAt: "2026-07-28T00:00:00.000Z",
+        updatedAt: "2026-07-28T00:00:00.000Z",
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        snoozedUntil: null,
+        snoozedAt: null,
+        taskOrchestrationEnabled: 1,
+        taskRelation: relation,
+        pinned: 1,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      const persisted = yield* threads.getById({ threadId: ThreadId.make("child") });
+      assert.strictEqual(Option.getOrThrow(persisted).taskOrchestrationEnabled, 1);
+      assert.deepStrictEqual(Option.getOrThrow(persisted).taskRelation, relation);
+      assert.strictEqual(Option.getOrThrow(persisted).pinned, 1);
+    }),
+  );
+
   it.effect("stores SQL NULL for missing project model options", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectionProjectRepository;
@@ -95,6 +142,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        taskOrchestrationEnabled: 0,
+        taskRelation: null,
+        pinned: 0,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
@@ -157,6 +207,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: "2026-03-25T00:00:00.000Z",
         snoozedUntil: "2026-03-26T09:00:00.000Z",
         snoozedAt: "2026-03-25T00:00:00.000Z",
+        taskOrchestrationEnabled: 0,
+        taskRelation: null,
+        pinned: 0,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,

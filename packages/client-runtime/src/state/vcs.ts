@@ -6,6 +6,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -43,6 +44,7 @@ function canUseVcsRefsCache(input: VcsListRefsInput): boolean {
  */
 export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChanges")(function* (
   input: VcsListRefsInput,
+  revalidateInterval: Duration.Input = VCS_REFS_REVALIDATE_INTERVAL,
 ) {
   const supervisor = yield* EnvironmentSupervisor;
   const cache = yield* EnvironmentCacheStore;
@@ -107,7 +109,7 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
     Stream.switchMap((generation) =>
       generation === null
         ? Stream.empty
-        : Stream.tick(VCS_REFS_REVALIDATE_INTERVAL).pipe(
+        : Stream.tick(revalidateInterval).pipe(
             Stream.mapEffect(
               () =>
                 refresh().pipe(
@@ -138,20 +140,34 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
   return Stream.concat(cachedRefs, refreshedRefs);
 });
 
-export function cachedVcsRefsChanges(environmentId: EnvironmentId, input: VcsListRefsInput) {
-  return followStreamInEnvironment(environmentId, Stream.unwrap(makeCachedVcsRefsChanges(input)));
+export function cachedVcsRefsChanges(
+  environmentId: EnvironmentId,
+  input: VcsListRefsInput,
+  revalidateInterval: Duration.Input = VCS_REFS_REVALIDATE_INTERVAL,
+) {
+  return followStreamInEnvironment(
+    environmentId,
+    Stream.unwrap(makeCachedVcsRefsChanges(input, revalidateInterval)),
+  );
 }
 
 export function createVcsEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
+  options?: { readonly revalidateInterval?: Duration.Input },
 ) {
   const listRefsByEnvironment = Atom.family((environmentId: EnvironmentId) =>
     Atom.family((inputKey: string) => {
       const input = JSON.parse(inputKey) as VcsListRefsInput;
       return runtime
-        .atom(cachedVcsRefsChanges(environmentId, input))
+        .atom(
+          cachedVcsRefsChanges(
+            environmentId,
+            input,
+            options?.revalidateInterval ?? VCS_REFS_REVALIDATE_INTERVAL,
+          ),
+        )
         .pipe(
-          Atom.setIdleTTL(5 * 60_000),
+          Atom.setIdleTTL(0),
           Atom.withLabel(`environment-data:vcs:list-refs:${environmentId}:${inputKey}`),
         );
     }),

@@ -176,7 +176,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1155,6 +1155,9 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
+  const setThreadTaskOrchestration = useAtomCommand(threadEnvironment.setTaskOrchestration, {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -3870,6 +3873,49 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const [taskOrchestrationPendingKey, setTaskOrchestrationPendingKey] = useState<string | null>(
+    null,
+  );
+  const taskOrchestrationPending =
+    activeThreadKey !== null && taskOrchestrationPendingKey === activeThreadKey;
+  const handleSetTaskOrchestrationEnabled = useCallback(
+    (enabled: boolean) => {
+      if (activeThreadRef === null) return;
+      const threadKey = scopedThreadKey(activeThreadRef);
+      void (async () => {
+        setTaskOrchestrationPendingKey(threadKey);
+        try {
+          const result = await setThreadTaskOrchestration({
+            environmentId: activeThreadRef.environmentId,
+            input: { threadId: activeThreadRef.threadId, enabled },
+          });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to update task orchestration",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+        } finally {
+          setTaskOrchestrationPendingKey((current) => (current === threadKey ? null : current));
+        }
+      })();
+    },
+    [activeThreadRef, setThreadTaskOrchestration],
+  );
+  const handleOpenParentThread = useCallback(() => {
+    const relation = activeThreadShell?.taskRelation;
+    if (activeThreadRef === null || relation == null) return;
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(
+        scopeThreadRef(activeThreadRef.environmentId, relation.parentThreadId),
+      ),
+    });
+  }, [activeThreadRef, activeThreadShell?.taskRelation, navigate]);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const activeThreadPr = resolveThreadPr({
     threadBranch: activeThread?.branch ?? null,
@@ -5679,6 +5725,12 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            taskOrchestrationEnabled={activeThreadShell?.taskOrchestrationEnabled ?? false}
+            taskOrchestrationPending={taskOrchestrationPending}
+            taskRelation={activeThreadShell?.taskRelation ?? null}
+            showTaskOrchestrationControl={isServerThread}
+            onSetTaskOrchestrationEnabled={handleSetTaskOrchestrationEnabled}
+            onOpenParentThread={handleOpenParentThread}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}

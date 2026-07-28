@@ -6,6 +6,7 @@
   - [Connection runtime](./architecture/connection-runtime.md)
   - [Remote environments](./architecture/remote.md)
   - [Server updates](./architecture/server-updates.md)
+  - [Agent-controlled tasks](./architecture/task-orchestration.md)
 - User guides
   - [Background service](./user/background-service.md)
   - [Remote access](./user/remote-access.md)
@@ -14,6 +15,8 @@
 - [T3 Connect](./cloud/t3-connect-clerk.md)
 - [Integrations](./integrations/source-control-providers.md)
 - [Mobile](./mobile/app.md)
-- [Operations](./operations/ci.md)
+- Operations
+  - [CI](./operations/ci.md)
+  - [Orchestrator distribution](./operations/orchestrator-distribution.md)
 - [Providers](./providers/codex.md)
 - [Reference](./reference/encyclopedia.md)

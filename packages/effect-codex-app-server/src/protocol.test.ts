@@ -32,8 +32,37 @@ const decodeConsumeRateLimitResetCreditParams = Schema.decodeUnknownEffect(
 const decodeConsumeRateLimitResetCreditResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/rateLimitResetCredit/consume"],
 );
+const decodeThreadStartParams = Schema.decodeUnknownEffect(CodexSchema.V2ThreadStartParams);
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
+  it.effect("keeps dynamic tools in thread/start compatibility payloads", () =>
+    Effect.gen(function* () {
+      const dynamicTools = [
+        {
+          type: "function" as const,
+          name: "t3_tasks",
+          description: "Coordinate bounded child tasks.",
+          inputSchema: {
+            type: "object",
+            properties: { action: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      ];
+
+      assert.deepEqual(
+        yield* decodeThreadStartParams({
+          cwd: "/tmp/project",
+          dynamicTools,
+        }),
+        {
+          cwd: "/tmp/project",
+          dynamicTools,
+        },
+      );
+    }),
+  );
+
   it.effect("maps account usage responses to the upstream token usage schema", () =>
     Effect.gen(function* () {
       assert.strictEqual(

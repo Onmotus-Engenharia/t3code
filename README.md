@@ -1,8 +1,19 @@
-# T3 Code
+# T3 Code Orchestrator
+
+> Custom T3 Code distribution with opt-in, agent-controlled user tasks. It installs beside official
+> T3 Code with a separate application identity, state, cache, logs, protocol, port strategy, icon,
+> and updater policy. See [task orchestration](./docs/architecture/task-orchestration.md) and the
+> [side-by-side distribution guide](./docs/operations/orchestrator-distribution.md).
 
 T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor, and OpenCode, more coming soon).
 
 ## Installation
+
+This fork is not published through the official T3 Code package channels. Build
+**T3 Code Orchestrator** from this repository by following the
+[side-by-side distribution guide](./docs/operations/orchestrator-distribution.md). Custom macOS
+builds install as `/Applications/T3 Code Orchestrator.app`; they must never replace an official T3
+Code bundle.
 
 > [!WARNING]
 > T3 Code currently supports Codex, Claude, Cursor, and OpenCode.
@@ -13,7 +24,11 @@ T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor,
 > - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `cursor-agent login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 
-### Run without installing
+### Official T3 Code
+
+The commands below install or run the upstream **official T3 Code**, not this orchestrator build:
+
+#### Run without installing
 
 ```bash
 npx t3@latest
@@ -21,23 +36,23 @@ npx t3@latest
 
 Tip: Use `npx t3@latest --help` for the full CLI reference.
 
-### Desktop app
+#### Desktop app
 
 Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
 
-#### Windows (`winget`)
+##### Windows (`winget`)
 
 ```bash
 winget install T3Tools.T3Code
 ```
 
-#### macOS (Homebrew)
+##### macOS (Homebrew)
 
 ```bash
 brew install --cask t3-code
 ```
 
-#### Arch Linux (AUR)
+##### Arch Linux (AUR)
 
 ```bash
 yay -S t3code-bin

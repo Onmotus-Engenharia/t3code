@@ -24,6 +24,8 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
   createProject,
+  setThreadPin,
+  setThreadTaskOrchestration,
   settleThread,
   stopThreadSession,
   unsettleThread,
@@ -167,6 +169,39 @@ describe("environment commands", () => {
           commandId: "unsettle-command",
           threadId: "thread-1",
           reason: "user",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches task orchestration permission and pin commands", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* setThreadTaskOrchestration({
+        commandId: CommandId.make("orchestration-command"),
+        threadId: ThreadId.make("thread-1"),
+        enabled: true,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* setThreadPin({
+        commandId: CommandId.make("pin-command"),
+        threadId: ThreadId.make("thread-1"),
+        pinned: true,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.task-orchestration.set",
+          commandId: "orchestration-command",
+          threadId: "thread-1",
+          enabled: true,
+        },
+        {
+          type: "thread.pin.set",
+          commandId: "pin-command",
+          threadId: "thread-1",
+          pinned: true,
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

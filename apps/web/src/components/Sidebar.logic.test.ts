@@ -655,9 +655,10 @@ describe("resolveSidebarV2Status", () => {
 });
 
 describe("sortThreadsForSidebarV2", () => {
-  const sortable = (input: { id: string; createdAt: string }) => ({
+  const sortable = (input: { id: string; createdAt: string; pinned?: boolean }) => ({
     id: input.id,
     createdAt: input.createdAt,
+    pinned: input.pinned ?? false,
   });
 
   it("orders by creation time, newest first, ignoring activity", () => {
@@ -678,17 +679,28 @@ describe("sortThreadsForSidebarV2", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
   });
+
+  it("keeps pinned threads before newer unpinned threads", () => {
+    const sorted = sortThreadsForSidebarV2([
+      sortable({ id: "new", createdAt: "2026-03-09T12:00:00.000Z" }),
+      sortable({ id: "pinned", createdAt: "2026-03-09T08:00:00.000Z", pinned: true }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["pinned", "new"]);
+  });
 });
 
 describe("sortSettledThreadsForSidebarV2", () => {
   const settled = (input: {
     id: string;
+    pinned?: boolean;
     settledAt?: string | null;
     latestUserMessageAt?: string | null;
     latestTurn?: OrchestrationLatestTurn | null;
     updatedAt?: string;
   }) => ({
     id: input.id,
+    pinned: input.pinned ?? false,
     settledAt: input.settledAt ?? null,
     latestUserMessageAt: input.latestUserMessageAt ?? null,
     latestTurn: input.latestTurn ?? null,
@@ -745,6 +757,15 @@ describe("sortSettledThreadsForSidebarV2", () => {
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("keeps pinned settled threads before newer unpinned history", () => {
+    const sorted = sortSettledThreadsForSidebarV2([
+      settled({ id: "new", settledAt: "2026-03-09T12:00:00.000Z" }),
+      settled({ id: "pinned", settledAt: "2026-03-09T08:00:00.000Z", pinned: true }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["pinned", "new"]);
   });
 });
 
@@ -1081,6 +1102,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    taskOrchestrationEnabled: false,
+    taskRelation: null,
+    pinned: false,
     deletedAt: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
     latestTurn: null,

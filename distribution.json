@@ -1,0 +1,36 @@
+{
+  "displayName": "T3 Code Orchestrator",
+  "slug": "t3-code-orchestrator",
+  "appId": "dev.mateuslucas.t3code.orchestrator",
+  "appUserModelId": "dev.mateuslucas.t3code.orchestrator",
+  "executableName": "t3-code-orchestrator",
+  "artifactName": "T3-Code-Orchestrator-${version}-${arch}.${ext}",
+  "nsisArtifactName": "T3-Code-Orchestrator-Setup-${version}-${arch}.${ext}",
+  "linuxDesktopEntryName": "t3-code-orchestrator.desktop",
+  "protocols": {
+    "production": "t3-code-orchestrator",
+    "development": "t3-code-orchestrator-dev",
+    "host": "app"
+  },
+  "directories": {
+    "userData": "t3-code-orchestrator",
+    "base": ".t3-code-orchestrator",
+    "state": "userdata",
+    "developmentState": "dev",
+    "cache": "cache",
+    "logs": "logs",
+    "locks": "locks"
+  },
+  "environment": {
+    "packagedHome": "T3CODE_ORCHESTRATOR_HOME"
+  },
+  "backend": {
+    "defaultPort": 4773,
+    "corsOrigin": "t3-code-orchestrator://app"
+  },
+  "updater": {
+    "enabled": false,
+    "reason": "Automatic updates are disabled for this custom distribution because no verified fork update feed is configured."
+  },
+  "iconComposerProject": "assets/orchestrator/app-icon.icon"
+}

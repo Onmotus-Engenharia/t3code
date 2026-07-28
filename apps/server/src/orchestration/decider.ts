@@ -372,6 +372,94 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          taskOrchestrationEnabled: false,
+          taskRelation: null,
+          pinned: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.task.create": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const parent = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.taskRelation.parentThreadId,
+      });
+      if (parent.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `parent thread ${parent.id} is deleted and cannot create tasks`,
+        });
+      }
+      if (!parent.taskOrchestrationEnabled) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `parent thread ${parent.id} does not allow task orchestration`,
+        });
+      }
+      if (parent.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `parent thread ${parent.id} belongs to a different project`,
+        });
+      }
+      const expectedRootThreadId = parent.taskRelation?.rootThreadId ?? parent.id;
+      const expectedDepth = (parent.taskRelation?.depth ?? 0) + 1;
+      if (command.taskRelation.rootThreadId !== expectedRootThreadId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `task root ${command.taskRelation.rootThreadId} does not match parent root ${expectedRootThreadId}`,
+        });
+      }
+      if (command.taskRelation.depth !== expectedDepth) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `task depth ${command.taskRelation.depth} must be ${expectedDepth} for parent ${parent.id}`,
+        });
+      }
+      const root = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.taskRelation.rootThreadId,
+      });
+      if (root.deletedAt !== null || root.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `task root ${root.id} is not an active thread in project ${command.projectId}`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: command.projectId,
+          title: command.title,
+          modelSelection: command.modelSelection,
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
+          branch: command.branch,
+          worktreePath: command.worktreePath,
+          taskOrchestrationEnabled: false,
+          taskRelation: command.taskRelation,
+          pinned: false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -706,6 +794,53 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           interactionMode: command.interactionMode,
           updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.task-orchestration.set": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.task-orchestration-set",
+        payload: {
+          threadId: command.threadId,
+          enabled: command.enabled,
+          updatedAt:
+            thread.taskOrchestrationEnabled === command.enabled ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.pin.set": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.pin-set",
+        payload: {
+          threadId: command.threadId,
+          pinned: command.pinned,
+          updatedAt: thread.pinned === command.pinned ? thread.updatedAt : occurredAt,
         },
       };
     }

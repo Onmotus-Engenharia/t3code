@@ -14,11 +14,12 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection } from "@t3tools/contracts";
+import { ModelSelection, TaskRelation } from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    taskRelation: Schema.NullOr(Schema.fromJsonString(TaskRelation)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -47,6 +48,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           settled_at,
           snoozed_until,
           snoozed_at,
+          task_orchestration_enabled,
+          task_relation_json,
+          task_parent_thread_id,
+          pinned,
           latest_user_message_at,
           pending_approval_count,
           pending_user_input_count,
@@ -70,6 +75,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.settledAt},
           ${row.snoozedUntil},
           ${row.snoozedAt},
+          ${row.taskOrchestrationEnabled},
+          ${row.taskRelation === null ? null : JSON.stringify(row.taskRelation)},
+          ${row.taskRelation?.parentThreadId ?? null},
+          ${row.pinned},
           ${row.latestUserMessageAt},
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
@@ -93,6 +102,10 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           settled_at = excluded.settled_at,
           snoozed_until = excluded.snoozed_until,
           snoozed_at = excluded.snoozed_at,
+          task_orchestration_enabled = excluded.task_orchestration_enabled,
+          task_relation_json = excluded.task_relation_json,
+          task_parent_thread_id = excluded.task_parent_thread_id,
+          pinned = excluded.pinned,
           latest_user_message_at = excluded.latest_user_message_at,
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
@@ -123,6 +136,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           settled_at AS "settledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          task_orchestration_enabled AS "taskOrchestrationEnabled",
+          task_relation_json AS "taskRelation",
+          pinned,
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
@@ -155,6 +171,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           settled_at AS "settledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          task_orchestration_enabled AS "taskOrchestrationEnabled",
+          task_relation_json AS "taskRelation",
+          pinned,
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",

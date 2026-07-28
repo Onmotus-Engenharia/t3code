@@ -46,6 +46,7 @@ import {
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
+import { T3_TASK_DYNAMIC_TOOLS } from "../../task-orchestration/tools.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
@@ -276,7 +277,16 @@ validationLayer("CodexAdapterLive validation", (it) => {
         runtimeMode: "full-access",
       });
 
-      NodeAssert.deepStrictEqual(validationRuntimeFactory.factory.mock.calls[0]?.[0], {
+      const runtimeOptions = validationRuntimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.ok(runtimeOptions);
+      NodeAssert.strictEqual(runtimeOptions.dynamicTools, T3_TASK_DYNAMIC_TOOLS);
+      NodeAssert.equal(typeof runtimeOptions.handleDynamicToolCall, "function");
+      const {
+        dynamicTools: _dynamicTools,
+        handleDynamicToolCall: _handler,
+        ...baseOptions
+      } = runtimeOptions;
+      NodeAssert.deepStrictEqual(baseOptions, {
         binaryPath: "codex",
         cwd: process.cwd(),
         launchArgs: "",

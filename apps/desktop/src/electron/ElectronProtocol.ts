@@ -8,16 +8,21 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
-export const DESKTOP_HOST = "app";
-export const DESKTOP_PRODUCTION_SCHEME = "t3code";
-export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+import distribution from "../../../../distribution.json" with { type: "json" };
+
+export const DESKTOP_HOST = distribution.protocols.host;
+export const DESKTOP_PRODUCTION_SCHEME = distribution.protocols.production;
+export const DESKTOP_DEVELOPMENT_SCHEME = distribution.protocols.development;
+export const DESKTOP_PRODUCTION_ORIGIN = distribution.backend.corsOrigin;
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
 }
 
 export function getDesktopOrigin(isDevelopment: boolean): string {
-  return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
+  return isDevelopment
+    ? `${DESKTOP_DEVELOPMENT_SCHEME}://${DESKTOP_HOST}`
+    : DESKTOP_PRODUCTION_ORIGIN;
 }
 
 export function getDesktopUrl(isDevelopment: boolean): string {

@@ -1,10 +1,29 @@
 # Brand icons
 
-The three Icon Composer projects are the source of truth for full application icons:
+The Icon Composer projects are the source of truth for full application icons:
 
+- `orchestrator/app-icon.icon`
 - `dev/app-icon.icon`
 - `nightly/app-icon.icon`
 - `prod/app-icon.icon`
+
+The orchestrator project is a distribution-specific copy of the production geometry with an
+indigo fill. Keep the production project unchanged so the two installed applications remain
+visually distinguishable.
+
+When Icon Composer is unavailable, `vp run icons:orchestrator` deterministically regenerates the
+tracked orchestrator macOS, universal/Linux, and Windows assets. It reads the indigo fill from
+`orchestrator/app-icon.icon/icon.json` and uses the production raster files only as geometry,
+alpha, and white-mark templates; all PNG renditions in the production ICO are retained. This
+fallback keeps non-macOS packaging reproducible without mutating production assets.
+
+For a native refresh, open `orchestrator/app-icon.icon` in Icon Composer. Export the macOS
+pre-Tahoe 1024pt/1× rendition to `orchestrator/orchestrator-macos-1024.png`, export the shared
+1024px rendition to `orchestrator/orchestrator-universal-1024.png`, and assemble Icon Composer's
+16, 24, 32, 48, 64, 128, and 256px Windows PNG renditions into
+`orchestrator/orchestrator-windows.ico`. Keep those exact paths because desktop packaging consumes
+them directly. Do not run the fallback over those native exports unless deliberately returning to
+the production geometry templates.
 
 Each project uses `text.svg` for the T3 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
 

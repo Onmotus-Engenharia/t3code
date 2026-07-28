@@ -41775,6 +41775,15 @@ export type V2ThreadStartParams = {
   readonly config?: { readonly [x: string]: unknown } | null;
   readonly cwd?: string | null;
   readonly developerInstructions?: string | null;
+  /**
+   * Compatibility patch for Codex app-server 0.145.0.
+   *
+   * The checked-in upstream schema components include `DynamicToolSpec`, but
+   * the generated `ThreadStartParams` object predates the `dynamicTools`
+   * property. Keep this narrow field patch until the upstream schema reference
+   * is regenerated.
+   */
+  readonly dynamicTools?: ReadonlyArray<V2ThreadStartParams__DynamicToolSpec> | null;
   readonly ephemeral?: boolean | null;
   readonly model?: string | null;
   readonly modelProvider?: string | null;
@@ -41801,6 +41810,19 @@ export const V2ThreadStartParams = Schema.Struct({
   ),
   cwd: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   developerInstructions: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  dynamicTools: Schema.optionalKey(
+    Schema.Union([
+      Schema.Array(
+        Schema.suspend(
+          (): Schema.Codec<
+            V2ThreadStartParams__DynamicToolSpec,
+            V2ThreadStartParams__DynamicToolSpec
+          > => V2ThreadStartParams__DynamicToolSpec,
+        ),
+      ),
+      Schema.Null,
+    ]),
+  ),
   ephemeral: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   model: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   modelProvider: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),

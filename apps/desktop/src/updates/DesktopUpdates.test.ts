@@ -208,6 +208,30 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
 }
 
 describe("DesktopUpdates", () => {
+  it.effect("hard-disables updates when the custom distribution has no verified fork feed", () => {
+    const harness = makeHarness({
+      env: {
+        T3CODE_DESKTOP_MOCK_UPDATES: "false",
+        T3CODE_DESKTOP_UPDATE_REPOSITORY: "pingdotgg/t3code",
+      },
+    });
+
+    return Effect.gen(function* () {
+      const updates = yield* DesktopUpdates.DesktopUpdates;
+      yield* updates.configure;
+
+      const state = yield* updates.getState;
+      const reason = yield* updates.disabledReason;
+      assert.isFalse(state.enabled);
+      assert.equal(state.status, "disabled");
+      assert.deepEqual(harness.feedUrls(), []);
+      assert.equal(
+        Option.getOrUndefined(reason),
+        "Automatic updates are disabled for this custom distribution because no verified fork update feed is configured.",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it("preserves complete causes for update poller and event failures", () => {
     const cause = Cause.combine(
       Cause.fail(new Error("updater failed")),

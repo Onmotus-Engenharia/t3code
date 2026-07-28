@@ -1,0 +1,19 @@
+sequenceDiagram
+  participant Agent as Parent Codex agent
+  participant Bridge as t3_tasks dynamic tools
+  participant Domain as T3 orchestration engine
+  participant Provider as Provider command reactor
+  participant Codex as Codex app-server
+  participant Store as Event log and projections
+  participant UI as Sidebar and thread view
+
+  Agent->>Bridge: create bounded child task
+  Bridge->>Domain: thread.task.create
+  Domain->>Store: persist thread.created
+  Store-->>UI: ordered thread-upserted push
+  Bridge->>Domain: thread.turn.start
+  Domain->>Provider: projected turn request
+  Provider->>Codex: start normal provider session and turn
+  Codex-->>Domain: provider runtime events
+  Domain->>Store: persist normalized events
+  Store-->>UI: ordered live updates

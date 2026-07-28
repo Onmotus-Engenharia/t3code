@@ -18,6 +18,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import distribution from "../../../../distribution.json" with { type: "json" };
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -224,7 +225,11 @@ function getAutoUpdateDisabledReason(args: {
   appImage?: string | undefined;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
+  mockUpdates: boolean;
 }): string | null {
+  if (!distribution.updater.enabled && !args.mockUpdates) {
+    return distribution.updater.reason;
+  }
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";
   }
@@ -309,6 +314,7 @@ export const make = Effect.gen(function* () {
         appImage: Option.getOrUndefined(config.appImagePath),
         disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
+        mockUpdates: config.mockUpdates,
       }),
     );
   });
@@ -708,6 +714,12 @@ export const make = Effect.gen(function* () {
     emitState,
     disabledReason: resolveDisabledReason,
     configure: Effect.gen(function* () {
+      if (!distribution.updater.enabled && !config.mockUpdates) {
+        const settings = yield* desktopSettings.get;
+        yield* setState(createBaseUpdateState(settings.updateChannel, false, environment));
+        return;
+      }
+
       const context = yield* Effect.context<never>();
       const runEffect = (effect: Effect.Effect<void>) => {
         void Effect.runPromiseWith(context)(effect);

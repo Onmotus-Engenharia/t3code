@@ -13,6 +13,7 @@ import {
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  TaskRelation,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -40,6 +41,9 @@ export const ProjectionThread = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozedUntil: Schema.NullOr(IsoDateTime),
   snoozedAt: Schema.NullOr(IsoDateTime),
+  taskOrchestrationEnabled: NonNegativeInt,
+  taskRelation: Schema.NullOr(TaskRelation),
+  pinned: NonNegativeInt,
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,

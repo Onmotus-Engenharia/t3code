@@ -19,6 +19,8 @@ import {
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
+  ThreadTaskOrchestrationSetPayload,
+  ThreadPinSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
@@ -30,6 +32,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnInterruptRequestedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -294,6 +297,9 @@ export function projectEvent(
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            taskOrchestrationEnabled: payload.taskOrchestrationEnabled,
+            taskRelation: payload.taskRelation,
+            pinned: payload.pinned,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -436,6 +442,63 @@ export function projectEvent(
         })),
       );
 
+    case "thread.task-orchestration-set":
+      return decodeForEvent(
+        ThreadTaskOrchestrationSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            taskOrchestrationEnabled: payload.enabled,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.pin-set":
+      return decodeForEvent(ThreadPinSetPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            pinned: payload.pinned,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.turn-interrupt-requested":
+      return decodeForEvent(
+        ThreadTurnInterruptRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          if (payload.turnId === undefined) {
+            return nextBase;
+          }
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (thread?.latestTurn?.turnId !== payload.turnId) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              latestTurn: {
+                ...thread.latestTurn,
+                state: "interrupted",
+                startedAt: thread.latestTurn.startedAt ?? payload.createdAt,
+                completedAt: thread.latestTurn.completedAt ?? payload.createdAt,
+              },
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
     case "thread.message-sent":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -526,23 +589,26 @@ export function projectEvent(
             session,
             latestTurn:
               session.status === "running" && session.activeTurnId !== null
-                ? {
-                    turnId: session.activeTurnId,
-                    state: "running",
-                    requestedAt:
-                      thread.latestTurn?.turnId === session.activeTurnId
-                        ? thread.latestTurn.requestedAt
-                        : session.updatedAt,
-                    startedAt:
-                      thread.latestTurn?.turnId === session.activeTurnId
-                        ? (thread.latestTurn.startedAt ?? session.updatedAt)
-                        : session.updatedAt,
-                    completedAt: null,
-                    assistantMessageId:
-                      thread.latestTurn?.turnId === session.activeTurnId
-                        ? thread.latestTurn.assistantMessageId
-                        : null,
-                  }
+                ? thread.latestTurn?.turnId === session.activeTurnId &&
+                  thread.latestTurn.state === "interrupted"
+                  ? thread.latestTurn
+                  : {
+                      turnId: session.activeTurnId,
+                      state: "running",
+                      requestedAt:
+                        thread.latestTurn?.turnId === session.activeTurnId
+                          ? thread.latestTurn.requestedAt
+                          : session.updatedAt,
+                      startedAt:
+                        thread.latestTurn?.turnId === session.activeTurnId
+                          ? (thread.latestTurn.startedAt ?? session.updatedAt)
+                          : session.updatedAt,
+                      completedAt: null,
+                      assistantMessageId:
+                        thread.latestTurn?.turnId === session.activeTurnId
+                          ? thread.latestTurn.assistantMessageId
+                          : null,
+                    }
                 : thread.latestTurn !== null &&
                     thread.latestTurn.state === "running" &&
                     settledTurnState !== null
@@ -650,7 +716,11 @@ export function projectEvent(
               ? thread.latestTurn
               : {
                   turnId: payload.turnId,
-                  state: checkpointStatusToLatestTurnState(payload.status),
+                  state:
+                    thread.latestTurn?.turnId === payload.turnId &&
+                    thread.latestTurn.state === "interrupted"
+                      ? "interrupted"
+                      : checkpointStatusToLatestTurnState(payload.status),
                   requestedAt:
                     thread.latestTurn?.turnId === payload.turnId
                       ? thread.latestTurn.requestedAt

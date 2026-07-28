@@ -106,6 +106,14 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  /**
+   * Host-provided dynamic tools are sticky at Codex thread creation time.
+   * Authorization must still be checked by the handler on every invocation.
+   */
+  readonly dynamicTools?: ReadonlyArray<EffectCodexSchema.V2ThreadStartParams__DynamicToolSpec>;
+  readonly handleDynamicToolCall?: (
+    input: EffectCodexSchema.DynamicToolCallParams,
+  ) => Effect.Effect<EffectCodexSchema.DynamicToolCallResponse, never>;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -302,6 +310,9 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly dynamicTools:
+    | ReadonlyArray<EffectCodexSchema.V2ThreadStartParams__DynamicToolSpec>
+    | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -311,6 +322,9 @@ function buildThreadStartParams(input: {
     approvalsReviewer: config.approvalsReviewer,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    ...(input.dynamicTools && input.dynamicTools.length > 0
+      ? { dynamicTools: input.dynamicTools }
+      : {}),
   };
 }
 
@@ -462,6 +476,9 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly dynamicTools?:
+    | ReadonlyArray<EffectCodexSchema.V2ThreadStartParams__DynamicToolSpec>
+    | undefined;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -469,6 +486,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    dynamicTools: input.dynamicTools,
   });
 
   if (resumeThreadId === undefined) {
@@ -1128,6 +1146,10 @@ export const makeCodexSessionRuntime = (
       }),
     );
 
+    if (options.handleDynamicToolCall) {
+      yield* client.handleServerRequest("item/tool/call", options.handleDynamicToolCall);
+    }
+
     yield* client.handleUnknownServerRequest((method) =>
       Effect.fail(CodexErrors.CodexAppServerRequestError.methodNotFound(method)),
     );
@@ -1227,6 +1249,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        dynamicTools: options.dynamicTools,
       });
 
       const providerThreadId = opened.thread.id;

@@ -62,6 +62,8 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { executeT3TaskTool } from "../../task-orchestration/Services/T3TaskToolBridge.ts";
+import { T3_TASK_DYNAMIC_TOOLS } from "../../task-orchestration/tools.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -1411,6 +1413,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          dynamicTools: T3_TASK_DYNAMIC_TOOLS,
+          handleDynamicToolCall: (payload) =>
+            executeT3TaskTool({
+              callerThreadId: input.threadId,
+              payload,
+            }),
           ...(mcpSession
             ? {
                 environment: {

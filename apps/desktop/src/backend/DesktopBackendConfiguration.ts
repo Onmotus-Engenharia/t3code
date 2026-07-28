@@ -74,6 +74,9 @@ const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
 };
 
 const DESKTOP_BACKEND_ENV_NAMES = [
+  // The desktop bootstrap always carries the already-resolved distribution
+  // home. Never let an ambient upstream T3CODE_HOME outrank it in the server.
+  "T3CODE_HOME",
   "T3CODE_PORT",
   "T3CODE_MODE",
   "T3CODE_NO_BROWSER",

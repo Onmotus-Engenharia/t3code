@@ -3,9 +3,11 @@ import {
   type EditorId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
+  type TaskRelation,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { CornerUpLeftIcon, LoaderCircleIcon, WorkflowIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -34,6 +36,12 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  taskOrchestrationEnabled: boolean;
+  taskOrchestrationPending: boolean;
+  taskRelation: TaskRelation | null;
+  showTaskOrchestrationControl: boolean;
+  onSetTaskOrchestrationEnabled: (enabled: boolean) => void;
+  onOpenParentThread: () => void;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
@@ -70,6 +78,12 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  taskOrchestrationEnabled,
+  taskOrchestrationPending,
+  taskRelation,
+  showTaskOrchestrationControl,
+  onSetTaskOrchestrationEnabled,
+  onOpenParentThread,
   onNewThreadInProject,
   onRunProjectScript,
   onAddProjectScript,
@@ -140,6 +154,58 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        {taskRelation !== null ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Open parent orchestrator thread"
+                  onClick={onOpenParentThread}
+                  className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              }
+            >
+              <CornerUpLeftIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Open parent orchestrator thread</TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {showTaskOrchestrationControl ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={
+                    taskOrchestrationEnabled
+                      ? "Task orchestration enabled"
+                      : "Task orchestration disabled"
+                  }
+                  aria-pressed={taskOrchestrationEnabled}
+                  disabled={taskOrchestrationPending}
+                  onClick={() => onSetTaskOrchestrationEnabled(!taskOrchestrationEnabled)}
+                  className={cn(
+                    "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60",
+                    taskOrchestrationEnabled
+                      ? "bg-indigo-500/12 text-indigo-700 hover:bg-indigo-500/18 dark:text-indigo-300"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                />
+              }
+            >
+              {taskOrchestrationPending ? (
+                <LoaderCircleIcon className="size-3.5 animate-spin" />
+              ) : (
+                <WorkflowIcon className="size-3.5" />
+              )}
+              <span className="hidden @5xl/header-actions:inline">
+                Tasks {taskOrchestrationEnabled ? "on" : "off"}
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Allow this thread to create and control tasks</TooltipPopup>
+          </Tooltip>
+        ) : null}
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
