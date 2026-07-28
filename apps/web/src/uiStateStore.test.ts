@@ -13,6 +13,7 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setSidebarTaskUnnested,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -23,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    sidebarUnnestedTaskKeys: [],
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
@@ -135,6 +137,17 @@ describe("uiStateStore pure functions", () => {
     });
   });
 
+  it("stores visual task un-nesting by scoped thread key", () => {
+    const initialState = makeUiState();
+    const unnested = setSidebarTaskUnnested(initialState, "environment:child", true);
+
+    expect(unnested.sidebarUnnestedTaskKeys).toEqual(["environment:child"]);
+    expect(setSidebarTaskUnnested(unnested, "environment:child", true)).toBe(unnested);
+    expect(
+      setSidebarTaskUnnested(unnested, "environment:child", false).sidebarUnnestedTaskKeys,
+    ).toEqual([]);
+  });
+
   it("stores the endpoint preference by stable key", () => {
     const next = setDefaultAdvertisedEndpointKey(makeUiState(), "desktop-core:lan:http");
 
@@ -158,6 +171,7 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
       },
+      sidebarUnnestedTaskKeys: ["environment:child", "", "environment:child"],
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
@@ -176,6 +190,7 @@ describe("parsePersistedState", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
+      sidebarUnnestedTaskKeys: ["environment:child"],
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -273,6 +288,7 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
+      sidebarUnnestedTaskKeys: ["environment:child"],
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -295,6 +311,7 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
+      sidebarUnnestedTaskKeys: ["environment:child"],
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {

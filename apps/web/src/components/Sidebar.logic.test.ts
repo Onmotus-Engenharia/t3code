@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   archiveSelectedThreadEntries,
+  buildSidebarTaskTree,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
@@ -19,6 +20,7 @@ import {
   resolveSidebarV2Status,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  sidebarTaskTreeSettleOrder,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -687,6 +689,115 @@ describe("sortThreadsForSidebarV2", () => {
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["pinned", "new"]);
+  });
+});
+
+describe("buildSidebarTaskTree", () => {
+  type TaskThread = {
+    id: string;
+    environmentId: string;
+    createdAt: string;
+    taskRelation: { parentThreadId: string } | null;
+  };
+  const task = (
+    id: string,
+    parentThreadId: string | null,
+    createdAt = "2026-03-09T10:00:00.000Z",
+  ): TaskThread => ({
+    id,
+    environmentId: "local",
+    createdAt,
+    taskRelation: parentThreadId === null ? null : { parentThreadId },
+  });
+  const key = (thread: TaskThread) => `${thread.environmentId}:${thread.id}`;
+  const parentKey = (thread: TaskThread) =>
+    thread.taskRelation === null
+      ? null
+      : `${thread.environmentId}:${thread.taskRelation.parentThreadId}`;
+
+  it("keeps child and grandchild rows under their root across lifecycle sections", () => {
+    const root = task("root", null);
+    const child = task("child", "root");
+    const grandchild = task("grandchild", "child");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [root, grandchild],
+      snoozedThreads: [],
+      settledThreads: [child],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    expect(tree.active).toHaveLength(1);
+    expect(tree.active[0]?.rows.map((row) => [row.thread.id, row.depth, row.section])).toEqual([
+      ["root", 0, "active"],
+      ["child", 1, "settled"],
+      ["grandchild", 2, "active"],
+    ]);
+    expect(tree.settled).toEqual([]);
+  });
+
+  it("visually re-roots an un-nested task and keeps its descendants attached", () => {
+    const root = task("root", null);
+    const child = task("child", "root");
+    const grandchild = task("grandchild", "child");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [root, child, grandchild],
+      snoozedThreads: [],
+      settledThreads: [],
+      unnestedThreadKeys: new Set(["local:child"]),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    expect(tree.active.map((group) => group.rows.map((row) => [row.thread.id, row.depth]))).toEqual(
+      [
+        [["root", 0]],
+        [
+          ["child", 0],
+          ["grandchild", 1],
+        ],
+      ],
+    );
+  });
+
+  it("keeps malformed cyclic task relations visible", () => {
+    const first = task("first", "second");
+    const second = task("second", "first");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [first, second],
+      snoozedThreads: [],
+      settledThreads: [],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    expect(tree.active.flatMap((group) => group.rows.map((row) => row.thread.id))).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
+  it("settles descendants deepest-first and the visual root last", () => {
+    const root = task("root", null);
+    const child = task("child", "root");
+    const grandchild = task("grandchild", "child");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [root, child, grandchild],
+      snoozedThreads: [],
+      settledThreads: [],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    expect(sidebarTaskTreeSettleOrder(tree.active[0], "local:root")).toEqual([
+      "local:grandchild",
+      "local:child",
+      "local:root",
+    ]);
+    expect(sidebarTaskTreeSettleOrder(undefined, "local:child")).toEqual(["local:child"]);
   });
 });
 

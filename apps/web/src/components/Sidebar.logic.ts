@@ -472,6 +472,135 @@ export function sortThreadsForSidebarV2<
   );
 }
 
+export type SidebarTaskTreeSection = "active" | "snoozed" | "settled";
+
+export interface SidebarTaskTreeRow<T> {
+  readonly thread: T;
+  readonly threadKey: string;
+  readonly depth: number;
+  readonly section: SidebarTaskTreeSection;
+}
+
+export interface SidebarTaskTreeGroup<T> {
+  readonly rootThreadKey: string;
+  readonly rows: readonly SidebarTaskTreeRow<T>[];
+}
+
+export type SidebarTaskTreeSections<T> = Record<
+  SidebarTaskTreeSection,
+  readonly SidebarTaskTreeGroup<T>[]
+>;
+
+/**
+ * Builds v2's visual task tree without changing orchestration ownership.
+ * A visually un-nested task becomes a root while its still-nested children
+ * remain attached to it. Each whole tree follows its visual root's lifecycle
+ * section so descendants never split across the active/snoozed/settled shelves.
+ */
+export function buildSidebarTaskTree<
+  T extends { readonly id: string; readonly createdAt: string; readonly pinned?: boolean },
+>(input: {
+  readonly activeThreads: readonly T[];
+  readonly snoozedThreads: readonly T[];
+  readonly settledThreads: readonly T[];
+  readonly unnestedThreadKeys: ReadonlySet<string>;
+  readonly getThreadKey: (thread: T) => string;
+  readonly getParentThreadKey: (thread: T) => string | null;
+}): SidebarTaskTreeSections<T> {
+  const sections: Record<SidebarTaskTreeSection, readonly T[]> = {
+    active: input.activeThreads,
+    snoozed: input.snoozedThreads,
+    settled: input.settledThreads,
+  };
+  const sectionByKey = new Map<string, SidebarTaskTreeSection>();
+  const threadByKey = new Map<string, T>();
+  for (const section of ["active", "snoozed", "settled"] as const) {
+    for (const thread of sections[section]) {
+      const key = input.getThreadKey(thread);
+      if (threadByKey.has(key)) continue;
+      threadByKey.set(key, thread);
+      sectionByKey.set(key, section);
+    }
+  }
+
+  const parentKeyByKey = new Map<string, string>();
+  const childrenByParentKey = new Map<string, T[]>();
+  for (const [threadKey, thread] of threadByKey) {
+    if (input.unnestedThreadKeys.has(threadKey)) continue;
+    const parentKey = input.getParentThreadKey(thread);
+    if (parentKey === null || parentKey === threadKey || !threadByKey.has(parentKey)) continue;
+    parentKeyByKey.set(threadKey, parentKey);
+    const children = childrenByParentKey.get(parentKey) ?? [];
+    children.push(thread);
+    childrenByParentKey.set(parentKey, children);
+  }
+  for (const [parentKey, children] of childrenByParentKey) {
+    childrenByParentKey.set(parentKey, sortThreadsForSidebarV2(children));
+  }
+
+  const groups: Record<SidebarTaskTreeSection, SidebarTaskTreeGroup<T>[]> = {
+    active: [],
+    snoozed: [],
+    settled: [],
+  };
+  const visited = new Set<string>();
+  const appendGroup = (root: T) => {
+    const rootThreadKey = input.getThreadKey(root);
+    if (visited.has(rootThreadKey)) return;
+    const rows: SidebarTaskTreeRow<T>[] = [];
+    const appendThread = (thread: T, depth: number) => {
+      const threadKey = input.getThreadKey(thread);
+      if (visited.has(threadKey)) return;
+      visited.add(threadKey);
+      rows.push({
+        thread,
+        threadKey,
+        depth,
+        section: sectionByKey.get(threadKey) ?? "active",
+      });
+      for (const child of childrenByParentKey.get(threadKey) ?? []) {
+        appendThread(child, depth + 1);
+      }
+    };
+    appendThread(root, 0);
+    const rootSection = sectionByKey.get(rootThreadKey) ?? "active";
+    groups[rootSection].push({ rootThreadKey, rows });
+  };
+
+  // Preserve current v2 ordering for visual roots in every lifecycle shelf.
+  for (const section of ["active", "snoozed", "settled"] as const) {
+    for (const thread of sections[section]) {
+      if (!parentKeyByKey.has(input.getThreadKey(thread))) {
+        appendGroup(thread);
+      }
+    }
+  }
+  // Defensive fallback for malformed cyclic relations: no thread disappears.
+  for (const section of ["active", "snoozed", "settled"] as const) {
+    for (const thread of sections[section]) {
+      appendGroup(thread);
+    }
+  }
+
+  return groups;
+}
+
+export function sidebarTaskTreeSettleOrder<T>(
+  group: SidebarTaskTreeGroup<T> | undefined,
+  targetThreadKey: string,
+): readonly string[] {
+  if (group === undefined || group.rootThreadKey !== targetThreadKey || group.rows.length <= 1) {
+    return [targetThreadKey];
+  }
+  return [
+    ...group.rows
+      .slice(1)
+      .toReversed()
+      .map((row) => row.threadKey),
+    targetThreadKey,
+  ];
+}
+
 type SettledTimestampInput = Pick<
   SidebarThreadSummary,
   "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
