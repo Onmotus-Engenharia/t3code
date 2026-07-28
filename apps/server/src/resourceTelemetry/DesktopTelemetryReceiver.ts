@@ -19,6 +19,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/unstable/encoding/Ndjson";
 
@@ -122,19 +123,25 @@ export interface DesktopTelemetryReceiverHealth {
   readonly lastError: Option.Option<string>;
 }
 
-export interface DesktopTelemetryReceiverShape {
-  readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
-  readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
-  readonly health: Effect.Effect<DesktopTelemetryReceiverHealth>;
-  readonly healthChanges: Stream.Stream<DesktopTelemetryReceiverHealth>;
-  readonly setDiagnosticsDemand: (
-    enabled: boolean,
-  ) => Effect.Effect<void, DesktopTelemetryControlFailed>;
-}
-
 export class DesktopTelemetryReceiver extends Context.Service<
   DesktopTelemetryReceiver,
-  DesktopTelemetryReceiverShape
+  {
+    readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
+    readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
+    readonly subscribe: Effect.Effect<
+      {
+        readonly latest: Option.Option<DesktopHostTelemetrySnapshot>;
+        readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
+      },
+      never,
+      Scope.Scope
+    >;
+    readonly health: Effect.Effect<DesktopTelemetryReceiverHealth>;
+    readonly healthChanges: Stream.Stream<DesktopTelemetryReceiverHealth>;
+    readonly setDiagnosticsDemand: (
+      enabled: boolean,
+    ) => Effect.Effect<void, DesktopTelemetryControlFailed>;
+  }
 >()("t3/resourceTelemetry/DesktopTelemetryReceiver") {}
 
 const decodeMessage = Schema.decodeUnknownEffect(DesktopHostTelemetryMessage);
@@ -163,6 +170,61 @@ function messageVersion(value: unknown): number | undefined {
   const version = Reflect.get(value, "version");
   return typeof version === "number" ? version : undefined;
 }
+
+export const writeAllToFileDescriptor = Effect.fn(
+  "resourceTelemetry.desktopTelemetryReceiver.writeAllToFileDescriptor",
+)(function* (fd: number, payload: Buffer) {
+  let offset = 0;
+  while (offset < payload.byteLength) {
+    const written = yield* Effect.callback<number, DesktopTelemetryControlFailed>(
+      (resume, signal) => {
+        if (signal.aborted) return;
+        try {
+          NodeFS.write(
+            fd,
+            payload,
+            offset,
+            payload.byteLength - offset,
+            null,
+            (error, bytesWritten) => {
+              if (error) {
+                resume(
+                  Effect.fail(
+                    new DesktopTelemetryControlFailed({
+                      fd,
+                      operation: "write",
+                      cause: error,
+                    }),
+                  ),
+                );
+                return;
+              }
+              resume(Effect.succeed(bytesWritten));
+            },
+          );
+        } catch (cause) {
+          resume(
+            Effect.fail(
+              new DesktopTelemetryControlFailed({
+                fd,
+                operation: "write",
+                cause,
+              }),
+            ),
+          );
+        }
+      },
+    );
+    if (written <= 0) {
+      return yield* new DesktopTelemetryControlFailed({
+        fd,
+        operation: "write",
+        cause: "desktop telemetry control pipe accepted no bytes",
+      });
+    }
+    offset += written;
+  }
+});
 
 export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")(function* () {
   const config = yield* ServerConfig;
@@ -215,7 +277,9 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
       Effect.asVoid,
     );
 
-  const setDiagnosticsDemand: DesktopTelemetryReceiverShape["setDiagnosticsDemand"] = (enabled) =>
+  const setDiagnosticsDemand: DesktopTelemetryReceiver["Service"]["setDiagnosticsDemand"] = (
+    enabled,
+  ) =>
     controlMutex.withPermits(1)(
       Effect.gen(function* () {
         const fd = config.desktopTelemetryControlFd;
@@ -234,23 +298,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
               }),
           ),
         );
-        yield* Effect.try({
-          try: () => {
-            const payload = Buffer.from(`${encoded}\n`);
-            let offset = 0;
-            while (offset < payload.byteLength) {
-              const written = NodeFS.writeSync(fd, payload, offset);
-              if (written <= 0) throw new Error("desktop telemetry control pipe accepted no bytes");
-              offset += written;
-            }
-          },
-          catch: (cause) =>
-            new DesktopTelemetryControlFailed({
-              fd,
-              operation: "write",
-              cause,
-            }),
-        }).pipe(
+        yield* writeAllToFileDescriptor(fd, Buffer.from(`${encoded}\n`)).pipe(
           Effect.tapError((error) =>
             updateHealth((current) => ({
               ...current,
@@ -354,16 +402,22 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
       Effect.sleep(STALE_CHECK_INTERVAL).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const current = yield* Ref.get(latest);
-            if (Option.isNone(current) || current.value.power.stale) return;
             const now = yield* DateTime.now;
-            if (DateTime.toEpochMillis(now) - current.value.sampledAtUnixMs < STALE_AFTER_MS)
-              return;
-            const staleSnapshot: DesktopHostTelemetrySnapshot = {
-              ...current.value,
-              power: { ...current.value.power, stale: true },
-            };
-            yield* Ref.set(latest, Option.some(staleSnapshot));
+            const staleSnapshot = yield* Ref.modify(latest, (current) => {
+              if (
+                Option.isNone(current) ||
+                current.value.power.stale ||
+                DateTime.toEpochMillis(now) - current.value.sampledAtUnixMs < STALE_AFTER_MS
+              ) {
+                return [Option.none<DesktopHostTelemetrySnapshot>(), current] as const;
+              }
+              const stale: DesktopHostTelemetrySnapshot = {
+                ...current.value,
+                power: { ...current.value.power, stale: true },
+              };
+              return [Option.some(stale), Option.some(stale)] as const;
+            });
+            if (Option.isNone(staleSnapshot)) return;
             yield* updateHealth((currentHealth) => ({
               ...currentHealth,
               status: currentHealth.status === "stopped" ? "stopped" : "degraded",
@@ -374,7 +428,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
                       new DesktopTelemetryStale({ fd, staleAfterMs: STALE_AFTER_MS }).message,
                     ),
             }));
-            yield* PubSub.publish(changes, staleSnapshot);
+            yield* PubSub.publish(changes, staleSnapshot.value);
           }),
         ),
       ),
@@ -384,6 +438,14 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   return DesktopTelemetryReceiver.of({
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
+    subscribe: Effect.gen(function* () {
+      const subscription = yield* PubSub.subscribe(changes);
+      const initial = yield* Ref.get(latest);
+      return {
+        latest: initial,
+        changes: Stream.fromSubscription(subscription),
+      };
+    }),
     health: Ref.get(health),
     healthChanges: Stream.fromPubSub(healthChanges),
     setDiagnosticsDemand,
@@ -393,13 +455,23 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
 export const layer = Layer.effect(DesktopTelemetryReceiver, make());
 
 export const layerTest = (
-  overrides: Partial<DesktopTelemetryReceiverShape> = {},
-): Layer.Layer<DesktopTelemetryReceiver> =>
-  Layer.succeed(
+  overrides: Partial<DesktopTelemetryReceiver["Service"]> = {},
+): Layer.Layer<DesktopTelemetryReceiver> => {
+  const latest = overrides.latest ?? Effect.succeedNone;
+  const changes = overrides.changes ?? Stream.empty;
+  return Layer.succeed(
     DesktopTelemetryReceiver,
     DesktopTelemetryReceiver.of({
-      latest: Effect.succeedNone,
-      changes: Stream.empty,
+      latest,
+      changes,
+      subscribe:
+        overrides.subscribe ??
+        latest.pipe(
+          Effect.map((initial) => ({
+            latest: initial,
+            changes,
+          })),
+        ),
       health: Effect.succeed({
         status: "unavailable",
         lastSampleAt: Option.none(),
@@ -410,3 +482,4 @@ export const layerTest = (
       ...overrides,
     }),
   );
+};

@@ -9,13 +9,18 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 const PROTOCOL_VERSION: u32 = 2;
 const MIN_SAMPLE_INTERVAL_MS: u64 = 250;
 const MAX_SAMPLE_INTERVAL_MS: u64 = 60_000;
-const EXTERNAL_PROCESS_START_TOLERANCE_MS: u64 = 2_000;
+const PROCESS_START_TIME_PRECISION_MS: u64 = 1_000;
 const HISTORY_RETENTION_MS: u64 = 60 * 60_000;
 const MAX_HISTORY_SNAPSHOTS: usize = 3_600;
+const INPUT_QUEUE_CAPACITY: usize = 64;
 const MAX_HISTORY_PROCESS_SAMPLES: usize = 20_000;
+const MAX_HISTORY_PROCESS_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PROCESS_NAME_BYTES: usize = 1_024;
+const MAX_PROCESS_COMMAND_BYTES: usize = 16 * 1_024;
+const MAX_PROCESS_STATUS_BYTES: usize = 256;
 const HISTORY_CHUNK_SNAPSHOTS: usize = 32;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ExternalProcess {
     pid: u32,
@@ -133,6 +138,15 @@ struct ProcessSample {
     io_semantics: IoSemantics,
 }
 
+impl ProcessSample {
+    fn estimated_history_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.name.len())
+            .saturating_add(self.command.len())
+            .saturating_add(self.status.len())
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SnapshotEvent {
@@ -147,6 +161,7 @@ struct SnapshotEvent {
     inaccessible_process_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
+    external_processes: Vec<ExternalProcess>,
     processes: Vec<ProcessSample>,
 }
 
@@ -183,29 +198,71 @@ struct CollectorConfig {
 struct HistoryRecorder {
     snapshots: VecDeque<SnapshotEvent>,
     process_sample_count: usize,
+    process_sample_bytes: usize,
 }
 
 impl HistoryRecorder {
     fn record(&mut self, snapshot: &SnapshotEvent) {
+        self.record_with_limits(
+            snapshot,
+            MAX_HISTORY_SNAPSHOTS,
+            MAX_HISTORY_PROCESS_SAMPLES,
+            MAX_HISTORY_PROCESS_BYTES,
+        );
+    }
+
+    fn record_with_limits(
+        &mut self,
+        snapshot: &SnapshotEvent,
+        max_snapshots: usize,
+        max_process_samples: usize,
+        max_process_bytes: usize,
+    ) {
         let mut retained = snapshot.clone();
         retained.request_id = None;
         self.process_sample_count = self
             .process_sample_count
             .saturating_add(retained.processes.len());
+        self.process_sample_bytes = self.process_sample_bytes.saturating_add(
+            retained
+                .processes
+                .iter()
+                .map(ProcessSample::estimated_history_bytes)
+                .sum::<usize>(),
+        );
         self.snapshots.push_back(retained);
-        self.trim(snapshot.sampled_at_unix_ms);
+        self.trim_to_limits(
+            snapshot.sampled_at_unix_ms,
+            max_snapshots,
+            max_process_samples,
+            max_process_bytes,
+        );
     }
 
-    fn trim(&mut self, now_ms: u64) {
+    fn trim_to_limits(
+        &mut self,
+        now_ms: u64,
+        max_snapshots: usize,
+        max_process_samples: usize,
+        max_process_bytes: usize,
+    ) {
         while self.snapshots.front().is_some_and(|snapshot| {
             snapshot.sampled_at_unix_ms < now_ms.saturating_sub(HISTORY_RETENTION_MS)
-                || self.snapshots.len() > MAX_HISTORY_SNAPSHOTS
-                || self.process_sample_count > MAX_HISTORY_PROCESS_SAMPLES
+                || self.snapshots.len() > max_snapshots
+                || self.process_sample_count > max_process_samples
+                || self.process_sample_bytes > max_process_bytes
         }) {
             if let Some(removed) = self.snapshots.pop_front() {
                 self.process_sample_count = self
                     .process_sample_count
                     .saturating_sub(removed.processes.len());
+                self.process_sample_bytes = self.process_sample_bytes.saturating_sub(
+                    removed
+                        .processes
+                        .iter()
+                        .map(ProcessSample::estimated_history_bytes)
+                        .sum::<usize>(),
+                );
             }
         }
     }
@@ -251,16 +308,24 @@ impl Collector {
                 (pid, ppid, process.start_time().saturating_mul(1_000))
             })
             .collect::<Vec<_>>();
-        let mut roots = config
+        let external_processes = config
             .external_processes
             .iter()
             .filter_map(|(pid, expected_start_time_ms)| {
                 let (_, _, actual_start_time_ms) = rows
                     .iter()
                     .find(|(candidate_pid, _, _)| candidate_pid == pid)?;
-                matches_external_identity(*actual_start_time_ms, *expected_start_time_ms)
-                    .then_some(*pid)
+                matches_external_identity(*actual_start_time_ms, *expected_start_time_ms).then_some(
+                    ExternalProcess {
+                        pid: *pid,
+                        start_time_ms: Some(*actual_start_time_ms),
+                    },
+                )
             })
+            .collect::<Vec<_>>();
+        let mut roots = external_processes
+            .iter()
+            .map(|process| process.pid)
             .collect::<HashSet<_>>();
         roots.insert(config.root_pid);
         let tracked = select_tracked_pids(&rows, &roots);
@@ -285,9 +350,15 @@ impl Collector {
                     ppid: process.parent().map(Pid::as_u32).unwrap_or(0),
                     start_time_ms: process.start_time().saturating_mul(1_000),
                     run_time_ms: process.run_time().saturating_mul(1_000),
-                    name: process.name().to_string_lossy().into_owned(),
-                    command,
-                    status: format!("{:?}", process.status()),
+                    name: truncate_utf8(
+                        process.name().to_string_lossy().into_owned(),
+                        MAX_PROCESS_NAME_BYTES,
+                    ),
+                    command: truncate_utf8(command, MAX_PROCESS_COMMAND_BYTES),
+                    status: truncate_utf8(
+                        format!("{:?}", process.status()),
+                        MAX_PROCESS_STATUS_BYTES,
+                    ),
                     cpu_percent: process.cpu_usage(),
                     cpu_time_ms: process.accumulated_cpu_time(),
                     resident_bytes: process.memory(),
@@ -311,6 +382,7 @@ impl Collector {
             retained_process_count: processes.len(),
             inaccessible_process_count: 0,
             request_id,
+            external_processes,
             processes,
         }
     }
@@ -321,7 +393,7 @@ fn process_refresh_kind() -> ProcessRefreshKind {
         .with_memory()
         .with_cpu()
         .with_disk_usage()
-        .with_cmd(UpdateKind::OnlyIfNotSet)
+        .with_cmd(UpdateKind::Always)
         .without_tasks()
 }
 
@@ -329,35 +401,64 @@ fn matches_external_identity(
     actual_start_time_ms: u64,
     expected_start_time_ms: Option<u64>,
 ) -> bool {
+    // sysinfo reports process starts at whole-second precision. Normalize the
+    // higher-resolution Electron timestamp to that same bucket instead of
+    // accepting adjacent seconds, which could attach a quickly reused PID.
     expected_start_time_ms.is_none_or(|expected| {
-        actual_start_time_ms.abs_diff(expected) <= EXTERNAL_PROCESS_START_TOLERANCE_MS
+        actual_start_time_ms == expected - (expected % PROCESS_START_TIME_PRECISION_MS)
     })
 }
 
 fn select_tracked_pids(rows: &[(u32, u32, u64)], roots: &HashSet<u32>) -> HashSet<u32> {
-    let mut children_by_parent = HashMap::<u32, Vec<u32>>::new();
-    for (pid, ppid, _) in rows {
-        children_by_parent.entry(*ppid).or_default().push(*pid);
+    let mut children_by_parent = HashMap::<u32, Vec<(u32, u64)>>::new();
+    let mut start_time_by_pid = HashMap::<u32, u64>::new();
+    for (pid, ppid, start_time_ms) in rows {
+        children_by_parent
+            .entry(*ppid)
+            .or_default()
+            .push((*pid, *start_time_ms));
+        start_time_by_pid.insert(*pid, *start_time_ms);
     }
 
-    let known_pids = rows.iter().map(|(pid, _, _)| *pid).collect::<HashSet<_>>();
     let mut tracked = HashSet::new();
+    let mut visited_identities = HashSet::new();
     let mut queue = roots
         .iter()
-        .copied()
-        .filter(|pid| known_pids.contains(pid))
+        .filter_map(|pid| {
+            start_time_by_pid
+                .get(pid)
+                .map(|start_time_ms| (*pid, *start_time_ms))
+        })
         .collect::<VecDeque<_>>();
 
-    while let Some(pid) = queue.pop_front() {
-        if !tracked.insert(pid) {
+    while let Some((pid, start_time_ms)) = queue.pop_front() {
+        if !visited_identities.insert((pid, start_time_ms)) {
             continue;
         }
+        tracked.insert(pid);
         if let Some(children) = children_by_parent.get(&pid) {
-            queue.extend(children.iter().copied());
+            queue.extend(
+                children
+                    .iter()
+                    .copied()
+                    .filter(|(_, child_start_time_ms)| *child_start_time_ms >= start_time_ms),
+            );
         }
     }
 
     tracked
+}
+
+fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut boundary = max_bytes;
+    while !value.is_char_boundary(boundary) {
+        boundary = boundary.saturating_sub(1);
+    }
+    value.truncate(boundary);
+    value
 }
 
 fn io_semantics() -> IoSemantics {
@@ -384,7 +485,7 @@ fn clamp_sample_interval(sample_interval_ms: u64) -> Option<Duration> {
 }
 
 fn spawn_input_reader() -> Receiver<Input> {
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(INPUT_QUEUE_CAPACITY);
     thread::spawn(move || {
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
@@ -418,6 +519,14 @@ fn spawn_input_reader() -> Receiver<Input> {
         }
     });
     receiver
+}
+
+fn sample_now_deadline(
+    current: Option<Instant>,
+    interval: Option<Duration>,
+    now: Instant,
+) -> Option<Instant> {
+    current.or_else(|| interval.map(|duration| now + duration))
 }
 
 fn write_event<T: Serialize>(writer: &mut impl Write, event: &T) -> io::Result<()> {
@@ -509,6 +618,24 @@ fn main() -> io::Result<()> {
     let mut streaming_enabled = false;
 
     loop {
+        if next_sample_at.is_some_and(|deadline| deadline <= Instant::now()) {
+            if let Some(current) = config.as_ref() {
+                if let Some(interval) = current.sample_interval {
+                    let event = collector.sample(current, None);
+                    history.record(&event);
+                    if streaming_enabled {
+                        write_event(&mut writer, &event)?;
+                    }
+                    next_sample_at = Some(Instant::now() + interval);
+                } else {
+                    next_sample_at = None;
+                }
+            } else {
+                next_sample_at = None;
+            }
+            continue;
+        }
+
         let timeout = next_sample_at
             .map(|deadline| deadline.saturating_duration_since(Instant::now()))
             .unwrap_or(Duration::from_secs(60));
@@ -589,9 +716,11 @@ fn main() -> io::Result<()> {
                             let event = collector.sample(current, Some(request_id));
                             history.record(&event);
                             write_event(&mut writer, &event)?;
-                            next_sample_at = current
-                                .sample_interval
-                                .map(|interval| Instant::now() + interval);
+                            next_sample_at = sample_now_deadline(
+                                next_sample_at,
+                                current.sample_interval,
+                                Instant::now(),
+                            );
                         } else {
                             write_error(
                                 &mut writer,
@@ -621,20 +750,7 @@ fn main() -> io::Result<()> {
                     Command::Shutdown { .. } => return Ok(()),
                 }
             }
-            Err(RecvTimeoutError::Timeout) => {
-                if let Some(current) = config.as_ref() {
-                    if let Some(interval) = current.sample_interval {
-                        let event = collector.sample(current, None);
-                        history.record(&event);
-                        if streaming_enabled {
-                            write_event(&mut writer, &event)?;
-                        }
-                        next_sample_at = Some(Instant::now() + interval);
-                    } else {
-                        next_sample_at = None;
-                    }
-                }
-            }
+            Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
@@ -660,6 +776,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_descendants_older_than_a_reused_parent_pid() {
+        let rows = vec![
+            (20, 1, 5_000),
+            (21, 20, 4_000),
+            (22, 20, 5_100),
+            (23, 21, 5_200),
+        ];
+        let tracked = select_tracked_pids(&rows, &HashSet::from([20]));
+
+        assert_eq!(tracked, HashSet::from([20, 22]));
+    }
+
+    #[test]
     fn ignores_missing_roots() {
         let rows = vec![(10, 1, 1_000), (11, 10, 1_100)];
         let tracked = select_tracked_pids(&rows, &HashSet::from([99]));
@@ -670,8 +799,9 @@ mod tests {
     #[test]
     fn validates_external_process_start_identity() {
         assert!(matches_external_identity(10_000, None));
-        assert!(matches_external_identity(10_000, Some(11_999)));
-        assert!(!matches_external_identity(10_000, Some(12_001)));
+        assert!(matches_external_identity(10_000, Some(10_999)));
+        assert!(!matches_external_identity(10_000, Some(11_000)));
+        assert!(!matches_external_identity(10_000, Some(9_999)));
     }
 
     #[test]
@@ -734,6 +864,10 @@ mod tests {
                 retained_process_count: 0,
                 inaccessible_process_count: 0,
                 request_id: Some("request".to_owned()),
+                external_processes: vec![ExternalProcess {
+                    pid: 7,
+                    start_time_ms: Some(1_000),
+                }],
                 processes: Vec::new(),
             });
         }
@@ -745,6 +879,11 @@ mod tests {
                 .iter()
                 .all(|snapshot| snapshot.request_id.is_none())
         );
+        assert!(history.snapshots.iter().all(|snapshot| {
+            snapshot.external_processes.len() == 1
+                && snapshot.external_processes[0].pid == 7
+                && snapshot.external_processes[0].start_time_ms == Some(1_000)
+        }));
         assert_eq!(
             history
                 .read(10_000, MAX_HISTORY_SNAPSHOTS as u64 * 1_000)
@@ -754,13 +893,91 @@ mod tests {
     }
 
     #[test]
+    fn bounds_history_by_estimated_process_bytes() {
+        let mut history = HistoryRecorder::default();
+        let command = "x".repeat(128);
+        let process = ProcessSample {
+            pid: 1,
+            ppid: 0,
+            start_time_ms: 0,
+            run_time_ms: 0,
+            name: "process".to_owned(),
+            command,
+            status: "Run".to_owned(),
+            cpu_percent: 0.0,
+            cpu_time_ms: 0,
+            resident_bytes: 0,
+            virtual_bytes: 0,
+            io_read_bytes: 0,
+            io_write_bytes: 0,
+            io_semantics: IoSemantics::Storage,
+        };
+        let sample_bytes = process.estimated_history_bytes();
+        for sequence in 0..3 {
+            history.record_with_limits(
+                &SnapshotEvent {
+                    version: PROTOCOL_VERSION,
+                    event_type: "snapshot",
+                    sequence,
+                    sampled_at_unix_ms: sequence * 1_000,
+                    collection_duration_micros: 1,
+                    scanned_process_count: 1,
+                    retained_process_count: 1,
+                    inaccessible_process_count: 0,
+                    request_id: None,
+                    external_processes: Vec::new(),
+                    processes: vec![ProcessSample {
+                        pid: sequence as u32 + 1,
+                        start_time_ms: sequence * 1_000,
+                        ..process.clone()
+                    }],
+                },
+                3,
+                3,
+                sample_bytes * 2,
+            );
+        }
+
+        assert!(history.process_sample_bytes <= sample_bytes * 2);
+        assert_eq!(history.snapshots.len(), 2);
+        assert_eq!(
+            history.snapshots.front().map(|snapshot| snapshot.sequence),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn truncates_process_strings_at_utf8_boundaries() {
+        let value = "é".repeat(MAX_PROCESS_NAME_BYTES);
+        let truncated = truncate_utf8(value, MAX_PROCESS_NAME_BYTES - 1);
+
+        assert!(truncated.len() <= MAX_PROCESS_NAME_BYTES - 1);
+        assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    #[test]
     fn refreshes_commands_without_enumerating_linux_tasks() {
         let refresh_kind = process_refresh_kind();
 
-        assert_eq!(refresh_kind.cmd(), UpdateKind::OnlyIfNotSet);
+        assert_eq!(refresh_kind.cmd(), UpdateKind::Always);
         assert!(!refresh_kind.tasks());
         assert!(refresh_kind.cpu());
         assert!(refresh_kind.memory());
         assert!(refresh_kind.disk_usage());
+    }
+
+    #[test]
+    fn sample_now_does_not_postpone_an_existing_periodic_deadline() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(1);
+
+        assert_eq!(
+            sample_now_deadline(
+                Some(deadline),
+                Some(Duration::from_secs(5)),
+                now + Duration::from_millis(100)
+            ),
+            Some(deadline)
+        );
     }
 }

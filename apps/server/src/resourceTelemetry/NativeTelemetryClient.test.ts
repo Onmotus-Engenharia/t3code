@@ -1,8 +1,14 @@
 import type { HostPowerSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
-import { resolveNativeSampleIntervalMs } from "./NativeTelemetryClient.ts";
+import {
+  canRequestNativeTelemetryRetry,
+  commitCollectionControlUpdate,
+  resolveNativeSampleIntervalMs,
+} from "./NativeTelemetryClient.ts";
 
 const basePower: HostPowerSnapshot = {
   source: "electron-main",
@@ -44,4 +50,41 @@ describe("resolveNativeSampleIntervalMs", () => {
     ).toBe(5_000);
     expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(1_000);
   });
+});
+
+describe("canRequestNativeTelemetryRetry", () => {
+  it("only accepts retry while the supervisor is waiting without a live sidecar", () => {
+    expect(canRequestNativeTelemetryRetry("degraded", false)).toBe(true);
+    expect(canRequestNativeTelemetryRetry("unavailable", false)).toBe(true);
+    expect(canRequestNativeTelemetryRetry("degraded", true)).toBe(false);
+    expect(canRequestNativeTelemetryRetry("healthy", false)).toBe(false);
+    expect(canRequestNativeTelemetryRetry("starting", false)).toBe(false);
+  });
+});
+
+describe("commitCollectionControlUpdate", () => {
+  it.effect("does not commit subscriber demand when the sidecar update fails", () =>
+    Effect.gen(function* () {
+      const initial = {
+        hostPower: basePower,
+        liveSubscriberCount: 0,
+        sampleIntervalMs: 5_000,
+      };
+      const state = yield* Ref.make(initial);
+      const failure = new Error("sidecar write failed");
+
+      const received = yield* commitCollectionControlUpdate(
+        state,
+        (current) => ({
+          ...current,
+          liveSubscriberCount: 1,
+          sampleIntervalMs: 1_000,
+        }),
+        () => Effect.fail(failure),
+      ).pipe(Effect.flip);
+
+      expect(received).toBe(failure);
+      expect(yield* Ref.get(state)).toEqual(initial);
+    }),
+  );
 });
