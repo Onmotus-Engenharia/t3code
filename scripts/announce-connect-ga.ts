@@ -1,58 +1,86 @@
-// @effect-diagnostics nodeBuiltinImport:off
-// @effect-diagnostics globalFetch:off
-// @effect-diagnostics globalConsole:off
-// @effect-diagnostics globalDate:off
-import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
+#!/usr/bin/env node
+
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Config from "effect/Config";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { Command, Flag } from "effect/unstable/cli";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
 const CLERK_API_URL = "https://api.clerk.com/v1";
 const RESEND_API_URL = "https://api.resend.com";
 const PAGE_SIZE = 500;
 
-export interface WaitlistEntry {
-  readonly id: string;
-  readonly email_address: string;
-  readonly status: "pending" | "invited" | "completed" | "rejected";
-}
+export class WaitlistEntry extends Schema.Class<WaitlistEntry>("WaitlistEntry")({
+  id: Schema.String,
+  email_address: Schema.String,
+  status: Schema.Literals(["pending", "invited", "completed", "rejected"]),
+}) {}
 
-interface ClerkWaitlistResponse {
-  readonly data: readonly WaitlistEntry[];
-  readonly total_count: number;
-}
+const ClerkWaitlistResponse = Schema.Struct({
+  data: Schema.Array(WaitlistEntry),
+  total_count: Schema.Int,
+});
+const ResendEmailResponse = Schema.Struct({ id: Schema.String });
+const LedgerEntry = Schema.Struct({
+  waitlistEntryId: Schema.String,
+  resendEmailId: Schema.String,
+  sentAt: Schema.String,
+});
+const LedgerEntriesJson = Schema.fromJsonString(Schema.Array(LedgerEntry));
+const decodeLedgerEntries = Schema.decodeUnknownEffect(LedgerEntriesJson);
+const encodeLedgerEntry = Schema.encodeEffect(Schema.fromJsonString(LedgerEntry));
+const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0));
 
-interface Options {
+export interface ConnectGaOptions {
   readonly send: boolean;
   readonly limit: number | undefined;
   readonly ledgerPath: string;
 }
 
-export function parseOptions(args: readonly string[], cwd = process.cwd()): Options {
-  let send = false;
-  let limit: number | undefined;
-  let ledgerPath = NodePath.resolve(cwd, ".t3/connect-ga-email-ledger.jsonl");
+const ClerkSecretKey = Config.string("CLERK_SECRET_KEY");
+const ResendApiKey = Config.string("RESEND_API_KEY");
+const EmailFrom = Config.string("CONNECT_GA_EMAIL_FROM");
+const EmailReplyTo = Config.option(Config.string("CONNECT_GA_EMAIL_REPLY_TO"));
+const SignInUrl = Config.url("CONNECT_GA_SIGN_IN_URL");
 
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
-    if (argument === "--send") {
-      send = true;
-    } else if (argument === "--limit") {
-      const value = Number(args[index + 1]);
-      if (!Number.isSafeInteger(value) || value <= 0) {
-        throw new Error("--limit must be followed by a positive integer.");
-      }
-      limit = value;
-      index += 1;
-    } else if (argument === "--ledger") {
-      const value = args[index + 1];
-      if (!value) throw new Error("--ledger must be followed by a file path.");
-      ledgerPath = NodePath.resolve(cwd, value);
-      index += 1;
-    } else {
-      throw new Error(`Unknown argument: ${argument}`);
-    }
+export class ConnectGaRequestError extends Schema.TaggedErrorClass<ConnectGaRequestError>()(
+  "ConnectGaRequestError",
+  {
+    service: Schema.Literals(["Clerk", "Resend"]),
+    operation: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `${this.service} ${this.operation} request failed.`;
   }
+}
 
-  return { send, limit, ledgerPath };
+export class ConnectGaResponseError extends Schema.TaggedErrorClass<ConnectGaResponseError>()(
+  "ConnectGaResponseError",
+  {
+    service: Schema.Literals(["Clerk", "Resend"]),
+    operation: Schema.String,
+    status: Schema.Int,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `${this.service} ${this.operation} returned status ${this.status}.`;
+  }
 }
 
 export function renderConnectGaEmail(signInUrl: string): {
@@ -76,67 +104,97 @@ Julius`;
   return { subject, html, text };
 }
 
-async function clerkRequest(secretKey: string, offset: number): Promise<ClerkWaitlistResponse> {
+const executeJsonRequest = Effect.fn("executeJsonRequest")(function* <S extends Schema.Top>(
+  request: HttpClientRequest.HttpClientRequest,
+  schema: S,
+  context: {
+    readonly service: "Clerk" | "Resend";
+    readonly operation: string;
+  },
+) {
+  const client = (yield* HttpClient.HttpClient).pipe(
+    HttpClient.retryTransient({ retryOn: "errors-and-responses", times: 3 }),
+  );
+  const response = yield* client
+    .execute(request)
+    .pipe(Effect.mapError((cause) => new ConnectGaRequestError({ ...context, cause })));
+  const success = yield* HttpClientResponse.filterStatusOk(response).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ConnectGaResponseError({
+          ...context,
+          status: response.status,
+          cause,
+        }),
+    ),
+  );
+  return yield* HttpClientResponse.schemaBodyJson(schema)(success).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ConnectGaResponseError({
+          ...context,
+          status: response.status,
+          cause,
+        }),
+    ),
+  );
+});
+
+const fetchWaitlistPage = Effect.fn("fetchWaitlistPage")(function* (
+  secretKey: string,
+  offset: number,
+) {
   const url = new URL(`${CLERK_API_URL}/waitlist_entries`);
   url.searchParams.set("status", "pending");
   url.searchParams.set("limit", String(PAGE_SIZE));
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("order_by", "+created_at");
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${secretKey}`,
-      "Clerk-API-Version": "2026-05-12",
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Clerk waitlist request failed (${response.status}): ${await response.text()}`);
-  }
-  return (await response.json()) as ClerkWaitlistResponse;
-}
 
-export async function fetchPendingWaitlistEntries(
+  const request = HttpClientRequest.get(url.href).pipe(
+    HttpClientRequest.setHeader("Authorization", `Bearer ${secretKey}`),
+    HttpClientRequest.setHeader("Clerk-API-Version", "2026-05-12"),
+  );
+  return yield* executeJsonRequest(request, ClerkWaitlistResponse, {
+    service: "Clerk",
+    operation: "list pending waitlist entries",
+  });
+});
+
+export const fetchPendingWaitlistEntries = Effect.fn("fetchPendingWaitlistEntries")(function* (
   secretKey: string,
   limit?: number,
-): Promise<readonly WaitlistEntry[]> {
-  const entries: WaitlistEntry[] = [];
+) {
+  const entries: Array<WaitlistEntry> = [];
   while (true) {
     if (limit !== undefined && entries.length >= limit) break;
-    const page = await clerkRequest(secretKey, entries.length);
+    const page = yield* fetchWaitlistPage(secretKey, entries.length);
     entries.push(...page.data);
     if (entries.length >= page.total_count || page.data.length === 0) break;
   }
   return limit === undefined ? entries : entries.slice(0, limit);
-}
+});
 
-async function readLedger(path: string): Promise<Set<string>> {
-  const contents = await NodeFSP.readFile(path, "utf8").catch((error: unknown) => {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
-    throw error;
-  });
-  return new Set(
-    contents
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => (JSON.parse(line) as { readonly waitlistEntryId: string }).waitlistEntryId),
-  );
-}
+const readLedger = Effect.fn("readLedger")(function* (ledgerPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(ledgerPath))) return new Set<string>();
+  const contents = yield* fs.readFileString(ledgerPath);
+  const lines = contents.split("\n").filter(Boolean);
+  const entries = yield* decodeLedgerEntries(`[${lines.join(",")}]`);
+  return new Set(entries.map((entry) => entry.waitlistEntryId));
+});
 
-async function sendEmail(input: {
+const sendEmail = Effect.fn("sendEmail")(function* (input: {
   readonly apiKey: string;
   readonly from: string;
   readonly replyTo: string | undefined;
   readonly entry: WaitlistEntry;
   readonly signInUrl: string;
-}): Promise<string> {
+}) {
   const email = renderConnectGaEmail(input.signInUrl);
-  const response = await fetch(`${RESEND_API_URL}/emails`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json",
-      "Idempotency-Key": `connect-ga/${input.entry.id}`,
-    },
-    body: JSON.stringify({
+  const request = yield* HttpClientRequest.post(`${RESEND_API_URL}/emails`).pipe(
+    HttpClientRequest.setHeader("Authorization", `Bearer ${input.apiKey}`),
+    HttpClientRequest.setHeader("Idempotency-Key", `connect-ga/${input.entry.id}`),
+    HttpClientRequest.bodyJson({
       from: input.from,
       to: [input.entry.email_address],
       subject: email.subject,
@@ -144,58 +202,115 @@ async function sendEmail(input: {
       text: email.text,
       ...(input.replyTo ? { reply_to: input.replyTo } : {}),
     }),
+  );
+  return yield* executeJsonRequest(request, ResendEmailResponse, {
+    service: "Resend",
+    operation: `send Connect GA email for ${input.entry.id}`,
   });
-  if (!response.ok) {
-    throw new Error(
-      `Resend request failed for ${input.entry.id} (${response.status}): ${await response.text()}`,
-    );
-  }
-  return ((await response.json()) as { readonly id: string }).id;
-}
+});
 
-async function main() {
-  const options = parseOptions(process.argv.slice(2));
-  const clerkSecretKey = process.env.CLERK_SECRET_KEY;
-  if (!clerkSecretKey) throw new Error("CLERK_SECRET_KEY is required.");
-
-  const entries = await fetchPendingWaitlistEntries(clerkSecretKey, options.limit);
-  const sent = await readLedger(options.ledgerPath);
+export const announceConnectGa = Effect.fn("announceConnectGa")(function* (
+  options: ConnectGaOptions,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const clerkSecretKey = yield* ClerkSecretKey;
+  const ledgerPath = path.resolve(options.ledgerPath);
+  const entries = yield* fetchPendingWaitlistEntries(clerkSecretKey, options.limit);
+  const sent = yield* readLedger(ledgerPath);
   const remaining = entries.filter((entry) => !sent.has(entry.id));
 
-  console.log(
-    `${options.send ? "Sending to" : "Dry run:"} ${remaining.length} pending waitlist ${remaining.length === 1 ? "entry" : "entries"} (${entries.length - remaining.length} already recorded).`,
+  yield* Effect.logInfo(options.send ? "Connect GA outreach starting" : "Connect GA dry run").pipe(
+    Effect.annotateLogs({
+      pendingEntries: remaining.length,
+      alreadyRecorded: entries.length - remaining.length,
+      ledgerPath,
+    }),
   );
+
   if (!options.send) {
-    for (const entry of remaining) console.log(`${entry.id}\t${entry.email_address}`);
-    console.log("No email was sent. Re-run with --send after reviewing this list.");
+    for (const entry of remaining) {
+      yield* Effect.logInfo("pending waitlist recipient").pipe(
+        Effect.annotateLogs({
+          waitlistEntryId: entry.id,
+          emailAddress: entry.email_address,
+        }),
+      );
+    }
+    yield* Effect.logInfo("No email was sent. Re-run with --send after reviewing the list.");
     return;
   }
 
-  const resendApiKey = process.env.RESEND_API_KEY;
-  const from = process.env.CONNECT_GA_EMAIL_FROM;
-  const signInUrl = process.env.CONNECT_GA_SIGN_IN_URL;
-  if (!resendApiKey) throw new Error("RESEND_API_KEY is required with --send.");
-  if (!from) throw new Error("CONNECT_GA_EMAIL_FROM is required with --send.");
-  if (!signInUrl) throw new Error("CONNECT_GA_SIGN_IN_URL is required with --send.");
+  const resendApiKey = yield* ResendApiKey;
+  const from = yield* EmailFrom;
+  const replyTo = Option.getOrUndefined(yield* EmailReplyTo);
+  const signInUrl = (yield* SignInUrl).href;
+  yield* fs.makeDirectory(path.dirname(ledgerPath), { recursive: true });
+  let ledgerContents = (yield* fs.exists(ledgerPath)) ? yield* fs.readFileString(ledgerPath) : "";
 
-  await NodeFSP.mkdir(NodePath.dirname(options.ledgerPath), { recursive: true });
   for (const [index, entry] of remaining.entries()) {
-    const resendEmailId = await sendEmail({
+    const response = yield* sendEmail({
       apiKey: resendApiKey,
       from,
-      replyTo: process.env.CONNECT_GA_EMAIL_REPLY_TO,
+      replyTo,
       entry,
       signInUrl,
     });
-    await NodeFSP.appendFile(
-      options.ledgerPath,
-      `${JSON.stringify({ waitlistEntryId: entry.id, resendEmailId, sentAt: new Date().toISOString() })}\n`,
-      "utf8",
+    const encodedLedgerEntry = yield* encodeLedgerEntry({
+      waitlistEntryId: entry.id,
+      resendEmailId: response.id,
+      sentAt: DateTime.formatIso(yield* DateTime.now),
+    });
+    ledgerContents += `${encodedLedgerEntry}\n`;
+    yield* fs.writeFileString(ledgerPath, ledgerContents);
+    yield* Effect.logInfo("Connect GA email sent").pipe(
+      Effect.annotateLogs({
+        waitlistEntryId: entry.id,
+        completed: index + 1,
+        total: remaining.length,
+      }),
     );
-    console.log(`[${index + 1}/${remaining.length}] Sent ${entry.id}`);
   }
-}
+});
+
+export const announceConnectGaCommand = Command.make(
+  "announce-connect-ga",
+  {
+    send: Flag.boolean("send").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription("Send emails. Without this flag, only print a dry-run recipient list."),
+    ),
+    limit: Flag.integer("limit").pipe(
+      Flag.withSchema(PositiveInteger),
+      Flag.optional,
+      Flag.withDescription("Process at most this many pending waitlist entries."),
+    ),
+    ledgerPath: Flag.string("ledger").pipe(
+      Flag.withDefault(".t3/connect-ga-email-ledger.jsonl"),
+      Flag.withDescription("Path to the idempotency ledger."),
+    ),
+  },
+  ({ send, limit, ledgerPath }) =>
+    announceConnectGa({
+      send,
+      limit: Option.getOrUndefined(limit),
+      ledgerPath,
+    }),
+).pipe(
+  Command.withDescription(
+    "Email pending Clerk waitlist members that T3 Connect is generally available.",
+  ),
+);
 
 if (import.meta.main) {
-  await main();
+  Command.run(announceConnectGaCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Logger.layer([Logger.consolePretty()]),
+        NodeServices.layer,
+        FetchHttpClient.layer,
+      ),
+    ),
+    NodeRuntime.runMain,
+  );
 }

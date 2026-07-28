@@ -1,37 +1,94 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
-import { parseOptions, renderConnectGaEmail } from "./announce-connect-ga.js";
+import { fetchPendingWaitlistEntries, renderConnectGaEmail } from "./announce-connect-ga.ts";
 
-describe("announce-connect-ga", () => {
-  it("defaults to a dry run with the worktree-local ledger", () => {
-    expect(parseOptions([], "/worktree")).toEqual({
-      send: false,
-      limit: undefined,
-      ledgerPath: "/worktree/.t3/connect-ga-email-ledger.jsonl",
-    });
-  });
+it("renders a personal plain-text and HTML announcement", () => {
+  const email = renderConnectGaEmail("https://example.com/sign-in");
+  assert.ok(email.subject.includes("T3 Connect"));
+  assert.ok(email.text.includes("Julius"));
+  assert.ok(email.text.includes("https://example.com/sign-in"));
+  assert.ok(email.html.includes('href="https://example.com/sign-in"'));
+});
 
-  it("requires an explicit send flag and accepts a bounded test run", () => {
-    expect(parseOptions(["--send", "--limit", "2", "--ledger", "sent.jsonl"], "/worktree")).toEqual(
-      {
-        send: true,
-        limit: 2,
-        ledgerPath: "/worktree/sent.jsonl",
-      },
+it.effect("fetches and schema-decodes pending Clerk waitlist entries", () => {
+  const requests: Array<{
+    readonly authorization: string | undefined;
+    readonly status: string | null;
+  }> = [];
+  const httpClientLayer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      const url = new URL(request.url);
+      requests.push({
+        authorization: request.headers.authorization,
+        status: url.searchParams.get("status"),
+      });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "waitlist_1",
+                  email_address: "person@example.com",
+                  status: "pending",
+                },
+              ],
+              total_count: 1,
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+      );
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const entries = yield* fetchPendingWaitlistEntries("sk_test_secret").pipe(
+      Effect.provide(httpClientLayer),
     );
-  });
-
-  it("rejects invalid limits", () => {
-    expect(() => parseOptions(["--limit", "0"])).toThrow(
-      "--limit must be followed by a positive integer.",
+    assert.deepStrictEqual(
+      entries.map((entry) => ({
+        id: entry.id,
+        emailAddress: entry.email_address,
+        status: entry.status,
+      })),
+      [{ id: "waitlist_1", emailAddress: "person@example.com", status: "pending" }],
     );
+    assert.deepStrictEqual(requests, [
+      { authorization: "Bearer sk_test_secret", status: "pending" },
+    ]);
   });
+});
 
-  it("renders a personal plain-text and HTML announcement", () => {
-    const email = renderConnectGaEmail("https://example.com/sign-in");
-    expect(email.subject).toContain("T3 Connect");
-    expect(email.text).toContain("Julius");
-    expect(email.text).toContain("https://example.com/sign-in");
-    expect(email.html).toContain('href="https://example.com/sign-in"');
+it.effect("returns a typed response error when Clerk returns malformed JSON", () => {
+  const httpClientLayer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response('{"data":"not-an-array","total_count":1}', {
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const error = yield* fetchPendingWaitlistEntries("sk_test_secret").pipe(
+      Effect.provide(httpClientLayer),
+      Effect.flip,
+    );
+    if (error._tag !== "ConnectGaResponseError") {
+      assert.fail(`Unexpected error: ${error._tag}`);
+    }
+    assert.equal(error.service, "Clerk");
+    assert.equal(error.status, 200);
   });
 });
