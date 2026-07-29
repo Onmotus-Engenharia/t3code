@@ -96,7 +96,15 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
 
 export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
+  /** Visual density only. Nested descendants are always compact. */
   readonly variant: "card" | "slim";
+  /** Own lifecycle controls row action independently from density. */
+  readonly lifecycle: ThreadSection;
+  readonly threadKey: string;
+  readonly rootThreadKey: string;
+  readonly depth: number;
+  readonly hasTaskParent: boolean;
+  readonly visuallyUnnested: boolean;
   /** First settled row after the card block draws the SETTLED divider. */
   readonly showSettledDivider: boolean;
   readonly isLast: boolean;
@@ -113,6 +121,69 @@ export interface ThreadListV2Layout {
       a timeout at this boundary so the list re-partitions the moment a
       snooze expires instead of on the next minute tick. */
   readonly nextSnoozeWakeAt: string | null;
+}
+
+export type ThreadSection = "active" | "snoozed" | "settled";
+export type ThreadListV2LifecycleAction = "settle" | "unsettle" | "wake";
+
+export function threadListV2LifecycleAction(lifecycle: ThreadSection): ThreadListV2LifecycleAction {
+  if (lifecycle === "settled") return "unsettle";
+  if (lifecycle === "snoozed") return "wake";
+  return "settle";
+}
+
+export interface ThreadListV2CascadeStep {
+  readonly threadKey: string;
+  readonly action: "wake" | "settle";
+}
+
+export function threadListV2SettleOrder(
+  items: ReadonlyArray<Pick<ThreadListV2Item, "threadKey" | "rootThreadKey" | "depth">>,
+  targetThreadKey: string,
+): readonly string[] {
+  const target = items.find((item) => item.threadKey === targetThreadKey);
+  if (target === undefined || target.rootThreadKey !== targetThreadKey) return [targetThreadKey];
+  return items
+    .filter((item) => item.rootThreadKey === targetThreadKey)
+    .slice()
+    .sort((left, right) => right.depth - left.depth)
+    .map((item) => item.threadKey);
+}
+
+/** Visual-only task folding. Keep the root row and hide its descendants;
+ * lifecycle operations continue to receive the complete layout. */
+export function visibleThreadListV2Items(
+  items: ReadonlyArray<ThreadListV2Item>,
+  collapsedRootThreadKeys: ReadonlySet<string>,
+): ThreadListV2Item[] {
+  if (collapsedRootThreadKeys.size === 0) return [...items];
+  return items.filter(
+    (item) =>
+      item.threadKey === item.rootThreadKey || !collapsedRootThreadKeys.has(item.rootThreadKey),
+  );
+}
+
+export function threadListV2RootCascadeSteps(
+  items: ReadonlyArray<
+    Pick<ThreadListV2Item, "threadKey" | "rootThreadKey" | "depth" | "lifecycle">
+  >,
+  targetThreadKey: string,
+): readonly ThreadListV2CascadeStep[] {
+  const itemByKey = new Map(items.map((item) => [item.threadKey, item] as const));
+  const target = itemByKey.get(targetThreadKey);
+  if (target === undefined || target.rootThreadKey !== targetThreadKey) {
+    return [{ threadKey: targetThreadKey, action: "settle" }];
+  }
+  return threadListV2SettleOrder(items, targetThreadKey).flatMap((threadKey) => {
+    const row = itemByKey.get(threadKey);
+    if (row?.lifecycle === "settled") return [];
+    return row?.lifecycle === "snoozed"
+      ? [
+          { threadKey, action: "wake" as const },
+          { threadKey, action: "settle" as const },
+        ]
+      : [{ threadKey, action: "settle" as const }];
+  });
 }
 
 export interface ThreadListV2ThreadListItem {
@@ -190,6 +261,8 @@ export function buildThreadListV2Items(input: {
   /** Environments whose server supports thread.snooze/unsnooze. Same
       contract as settlementEnvironmentIds. */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  /** Device-local visual override. Does not change orchestration ownership. */
+  readonly unnestedThreadKeys?: ReadonlySet<string>;
   readonly autoSettleAfterDays?: number;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
@@ -209,8 +282,11 @@ export function buildThreadListV2Items(input: {
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
     : null;
 
-  const active: EnvironmentThreadShell[] = [];
-  const settled: EnvironmentThreadShell[] = [];
+  const sections: Record<ThreadSection, EnvironmentThreadShell[]> = {
+    active: [],
+    snoozed: [],
+    settled: [],
+  };
   let snoozedCount = 0;
   let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
@@ -227,7 +303,7 @@ export function buildThreadListV2Items(input: {
     // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
     // work). Snooze outranks settled classification, same as web.
     if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
-      snoozedCount += 1;
+      sections.snoozed.push(thread);
       if (
         thread.snoozedUntil != null &&
         (nextSnoozeWakeAt === null ||
@@ -238,33 +314,115 @@ export function buildThreadListV2Items(input: {
       continue;
     }
     if (supportsSettlement && effectiveSettled(thread, { now, autoSettleAfterDays })) {
-      settled.push(thread);
+      sections.settled.push(thread);
     } else {
-      active.push(thread);
+      sections.active.push(thread);
     }
   }
 
-  const orderedActive = sortThreadsForListV2(active);
-  const orderedSettled = [...settled].sort(
+  const orderedActive = sortThreadsForListV2(sections.active);
+  const orderedSnoozed = sortThreadsForListV2(sections.snoozed);
+  const orderedSettled = [...sections.settled].sort(
     (left, right) =>
       firstValidTimestampMs(right.latestUserMessageAt, right.updatedAt) -
       firstValidTimestampMs(left.latestUserMessageAt, left.updatedAt),
   );
-  const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
-  const visibleSettled =
-    orderedSettled.length > settledLimit ? orderedSettled.slice(0, settledLimit) : orderedSettled;
-
-  const items: ThreadListV2Item[] = [];
-  for (const thread of orderedActive) {
-    items.push({ thread, variant: "card", showSettledDivider: false, isLast: false });
+  const orderedBySection = {
+    active: orderedActive,
+    snoozed: orderedSnoozed,
+    settled: orderedSettled,
+  } satisfies Record<ThreadSection, EnvironmentThreadShell[]>;
+  const threadByKey = new Map<string, EnvironmentThreadShell>();
+  const sectionByKey = new Map<string, ThreadSection>();
+  for (const section of ["active", "snoozed", "settled"] as const) {
+    for (const thread of orderedBySection[section]) {
+      const key = `${thread.environmentId}:${thread.id}`;
+      if (threadByKey.has(key)) continue;
+      threadByKey.set(key, thread);
+      sectionByKey.set(key, section);
+    }
   }
-  for (const [index, thread] of visibleSettled.entries()) {
-    items.push({
-      thread,
-      variant: "slim",
-      showSettledDivider: index === 0,
-      isLast: false,
-    });
+  const parentByKey = new Map<string, string>();
+  const childrenByKey = new Map<string, EnvironmentThreadShell[]>();
+  for (const [key, thread] of threadByKey) {
+    if (input.unnestedThreadKeys?.has(key) === true || thread.taskRelation === null) continue;
+    const parentKey = `${thread.environmentId}:${thread.taskRelation.parentThreadId}`;
+    if (parentKey === key || !threadByKey.has(parentKey)) continue;
+    parentByKey.set(key, parentKey);
+    const children = childrenByKey.get(parentKey) ?? [];
+    children.push(thread);
+    childrenByKey.set(parentKey, children);
+  }
+  for (const [key, children] of childrenByKey) {
+    childrenByKey.set(key, sortThreadsForListV2(children));
+  }
+
+  const groups: Array<{ rootSection: ThreadSection; rows: ThreadListV2Item[] }> = [];
+  const visited = new Set<string>();
+  const appendGroup = (root: EnvironmentThreadShell) => {
+    const rootThreadKey = `${root.environmentId}:${root.id}`;
+    if (visited.has(rootThreadKey)) return;
+    const rows: ThreadListV2Item[] = [];
+    const append = (thread: EnvironmentThreadShell, depth: number) => {
+      const threadKey = `${thread.environmentId}:${thread.id}`;
+      if (visited.has(threadKey)) return;
+      visited.add(threadKey);
+      const section = sectionByKey.get(threadKey) ?? "active";
+      rows.push({
+        thread,
+        threadKey,
+        rootThreadKey,
+        depth,
+        hasTaskParent: thread.taskRelation !== null,
+        visuallyUnnested: input.unnestedThreadKeys?.has(threadKey) === true,
+        variant: depth > 0 || section === "settled" ? "slim" : "card",
+        lifecycle: section,
+        showSettledDivider: false,
+        isLast: false,
+      });
+      for (const child of childrenByKey.get(threadKey) ?? []) append(child, depth + 1);
+    };
+    append(root, 0);
+    groups.push({ rootSection: sectionByKey.get(rootThreadKey) ?? "active", rows });
+  };
+  for (const section of ["active", "snoozed", "settled"] as const) {
+    for (const thread of orderedBySection[section]) {
+      if (!parentByKey.has(`${thread.environmentId}:${thread.id}`)) appendGroup(thread);
+    }
+  }
+  // Cycles/malformed relations: every shell still becomes a visible root.
+  for (const section of ["active", "snoozed", "settled"] as const) {
+    for (const thread of orderedBySection[section]) appendGroup(thread);
+  }
+
+  const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
+  const visibleGroups: typeof groups = [];
+  let settledRowsShown = 0;
+  let settledRowsTotal = 0;
+  for (const group of groups) {
+    if (group.rootSection === "snoozed") continue;
+    if (group.rootSection !== "settled") {
+      visibleGroups.push(group);
+      continue;
+    }
+    settledRowsTotal += group.rows.length;
+    if (settledRowsShown >= settledLimit) continue;
+    visibleGroups.push(group);
+    settledRowsShown += group.rows.length;
+  }
+  snoozedCount = groups
+    .filter((group) => group.rootSection === "snoozed")
+    .reduce((count, group) => count + group.rows.length, 0);
+  const items = visibleGroups.flatMap((group) => group.rows);
+  const firstSettledIndex = visibleGroups
+    .flatMap((group, index) => (group.rootSection === "settled" ? [index] : []))
+    .at(0);
+  if (firstSettledIndex !== undefined) {
+    const itemIndex = visibleGroups
+      .slice(0, firstSettledIndex)
+      .reduce((count, group) => count + group.rows.length, 0);
+    const firstSettled = items[itemIndex];
+    if (firstSettled) items[itemIndex] = { ...firstSettled, showSettledDivider: true };
   }
   const last = items.at(-1);
   if (last) {
@@ -272,7 +430,7 @@ export function buildThreadListV2Items(input: {
   }
   return {
     items,
-    hiddenSettledCount: orderedSettled.length - visibleSettled.length,
+    hiddenSettledCount: settledRowsTotal - settledRowsShown,
     snoozedCount,
     nextSnoozeWakeAt,
   };

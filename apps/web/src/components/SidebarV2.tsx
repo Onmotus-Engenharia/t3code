@@ -118,6 +118,7 @@ import {
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
   sidebarTaskTreeSettleOrder,
+  visibleSidebarTaskTreeRows,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
@@ -419,6 +420,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
   nestingDepth: number;
+  taskChildCount: number;
+  taskTreeExpanded: boolean;
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
   variantAction: "settle" | "unsettle" | "unsnooze";
@@ -452,6 +455,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
+  onToggleTaskTree: (rootThreadKey: string) => void;
 }) {
   const {
     isRenaming,
@@ -464,6 +468,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     onStartRename,
     onThreadActivate,
     onThreadClick,
+    onToggleTaskTree,
     onUnsettle,
     onUnsnooze,
     renamingTitle,
@@ -681,6 +686,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     },
     [onSnooze, threadRef],
   );
+  const handleTaskTreeToggle = useCallback(
+    (event: ReactMouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggleTaskTree(threadKey);
+    },
+    [onToggleTaskTree, threadKey],
+  );
   // While the snooze popover is open the pointer leaves the row, which
   // would fade the hover actions out from under the open menu; pin them.
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
@@ -784,6 +797,24 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         #{pr.number}
       </button>
     ) : null;
+  const taskTreeToggle =
+    props.nestingDepth === 0 && props.taskChildCount > 0 ? (
+      <button
+        type="button"
+        aria-expanded={props.taskTreeExpanded}
+        aria-label={`${props.taskTreeExpanded ? "Collapse" : "Expand"} ${props.taskChildCount} task${
+          props.taskChildCount === 1 ? "" : "s"
+        }`}
+        data-testid="sidebar-v2-task-tree-toggle"
+        onClick={handleTaskTreeToggle}
+        className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/65 hover:bg-sidebar-row-hover hover:text-foreground"
+      >
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("size-3.5 transition-transform", !props.taskTreeExpanded && "-rotate-90")}
+        />
+      </button>
+    ) : null;
 
   if (variant === "slim") {
     const nestingOffset = props.nestingDepth * 14;
@@ -839,6 +870,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            {taskTreeToggle}
             <ThreadOrchestrationBadges thread={thread} />
             {title}
             {/* The PR badge stays outside the hover-fading slot: it must
@@ -1021,6 +1053,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               </span>
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              {taskTreeToggle}
               <ThreadOrchestrationBadges thread={thread} />
               {title}
             </div>
@@ -1503,17 +1536,28 @@ export default function SidebarV2() {
       }),
     [activeThreads, snoozedThreads, settledThreads, unnestedTaskKeySet],
   );
+  const [collapsedTaskRootKeys, setCollapsedTaskRootKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const toggleTaskTree = useCallback((rootThreadKey: string) => {
+    setCollapsedTaskRootKeys((current) => {
+      const next = new Set(current);
+      if (next.has(rootThreadKey)) next.delete(rootThreadKey);
+      else next.add(rootThreadKey);
+      return next;
+    });
+  }, []);
   const activeTaskRows = useMemo(
-    () => taskTreeSections.active.flatMap((group) => group.rows),
-    [taskTreeSections.active],
+    () => visibleSidebarTaskTreeRows(taskTreeSections.active, collapsedTaskRootKeys),
+    [collapsedTaskRootKeys, taskTreeSections.active],
   );
   const snoozedTaskRows = useMemo(
-    () => taskTreeSections.snoozed.flatMap((group) => group.rows),
-    [taskTreeSections.snoozed],
+    () => visibleSidebarTaskTreeRows(taskTreeSections.snoozed, collapsedTaskRootKeys),
+    [collapsedTaskRootKeys, taskTreeSections.snoozed],
   );
   const settledTaskRows = useMemo(
-    () => taskTreeSections.settled.flatMap((group) => group.rows),
-    [taskTreeSections.settled],
+    () => visibleSidebarTaskTreeRows(taskTreeSections.settled, collapsedTaskRootKeys),
+    [collapsedTaskRootKeys, taskTreeSections.settled],
   );
   const taskTreeGroupByRootKey = useMemo(
     () =>
@@ -2608,6 +2652,9 @@ export default function SidebarV2() {
                   // children/grandchildren always collapse to one line.
                   const isCard = rootSection === "active" && taskRow.depth === 0;
                   const rowVariant = isCard ? "card" : "slim";
+                  const taskGroup =
+                    taskRow.depth === 0 ? taskTreeGroupByRootKey.get(taskRow.threadKey) : undefined;
+                  const taskChildCount = Math.max(0, (taskGroup?.rows.length ?? 1) - 1);
                   return (
                     <SidebarV2Row
                       // Keyed per variant on purpose: when a thread settles,
@@ -2620,6 +2667,8 @@ export default function SidebarV2() {
                       thread={thread}
                       variant={rowVariant}
                       nestingDepth={taskRow.depth}
+                      taskChildCount={taskChildCount}
+                      taskTreeExpanded={!collapsedTaskRootKeys.has(taskRow.threadKey)}
                       // Snoozed rows wake; settled rows un-settle (explicit
                       // settles clear the override, auto-settled rows get
                       // pinned active); cards settle.
@@ -2674,6 +2723,7 @@ export default function SidebarV2() {
                       onUnsettle={attemptUnsettle}
                       onSnooze={attemptSnooze}
                       onUnsnooze={attemptUnsnooze}
+                      onToggleTaskTree={toggleTaskTree}
                     />
                   );
                 };

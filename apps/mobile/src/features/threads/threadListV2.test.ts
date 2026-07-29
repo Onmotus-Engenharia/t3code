@@ -17,6 +17,10 @@ import {
   resolveThreadListV2Enabled,
   resolveThreadListV2Status,
   sortThreadsForListV2,
+  threadListV2RootCascadeSteps,
+  threadListV2LifecycleAction,
+  threadListV2SettleOrder,
+  visibleThreadListV2Items,
 } from "./threadListV2";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -351,6 +355,151 @@ describe("buildThreadListV2Items settled paging", () => {
       "settled-3",
       "settled-2",
     ]);
+  });
+});
+
+describe("buildThreadListV2Items task tree", () => {
+  const relation = (parentThreadId: string, rootThreadId: string, depth: number) => ({
+    parentThreadId: ThreadId.make(parentThreadId),
+    rootThreadId: ThreadId.make(rootThreadId),
+    depth,
+    workspaceMode: "shared" as const,
+    createdBy: "agent" as const,
+  });
+
+  it("keeps descendants under root lifecycle while preserving own variant", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("root"), title: "root" }),
+        makeThread({
+          id: ThreadId.make("child"),
+          title: "child",
+          taskRelation: relation("root", "root", 1),
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+        makeThread({
+          id: ThreadId.make("grandchild"),
+          title: "grandchild",
+          taskRelation: relation("child", "root", 2),
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(
+      layout.items.map((item) => [item.thread.id, item.depth, item.variant, item.lifecycle]),
+    ).toEqual([
+      ["root", 0, "card", "active"],
+      ["child", 1, "slim", "settled"],
+      ["grandchild", 2, "slim", "active"],
+    ]);
+    expect(layout.items.map((item) => threadListV2LifecycleAction(item.lifecycle))).toEqual([
+      "settle",
+      "unsettle",
+      "settle",
+    ]);
+    expect(threadListV2SettleOrder(layout.items, `${environmentId}:root`)).toEqual([
+      `${environmentId}:grandchild`,
+      `${environmentId}:child`,
+      `${environmentId}:root`,
+    ]);
+    expect(threadListV2SettleOrder(layout.items, `${environmentId}:child`)).toEqual([
+      `${environmentId}:child`,
+    ]);
+  });
+
+  it("defaults expanded and visually folds descendants without changing the full layout", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("root"), title: "root" }),
+        makeThread({
+          id: ThreadId.make("child"),
+          title: "child",
+          taskRelation: relation("root", "root", 1),
+        }),
+        makeThread({
+          id: ThreadId.make("grandchild"),
+          title: "grandchild",
+          taskRelation: relation("child", "root", 2),
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(visibleThreadListV2Items(layout.items, new Set())).toHaveLength(3);
+    expect(
+      visibleThreadListV2Items(layout.items, new Set([`${environmentId}:root`])).map(
+        (item) => item.thread.id,
+      ),
+    ).toEqual(["root"]);
+    expect(layout.items).toHaveLength(3);
+  });
+
+  it("plans wake before settle for a snoozed descendant", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("root"), title: "root" }),
+        makeThread({
+          id: ThreadId.make("child"),
+          title: "child",
+          taskRelation: relation("root", "root", 1),
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+          snoozedUntil: "2026-06-03T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant, item.lifecycle])).toEqual([
+      ["root", "card", "active"],
+      ["child", "slim", "snoozed"],
+    ]);
+    expect(threadListV2RootCascadeSteps(layout.items, `${environmentId}:root`)).toEqual([
+      { threadKey: `${environmentId}:child`, action: "wake" },
+      { threadKey: `${environmentId}:child`, action: "settle" },
+      { threadKey: `${environmentId}:root`, action: "settle" },
+    ]);
+  });
+
+  it("visually re-roots tasks and never drops cycles or missing parents", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("child"),
+          title: "child",
+          taskRelation: relation("missing", "missing", 1),
+        }),
+        makeThread({
+          id: ThreadId.make("first"),
+          title: "first",
+          taskRelation: relation("second", "first", 1),
+        }),
+        makeThread({
+          id: ThreadId.make("second"),
+          title: "second",
+          taskRelation: relation("first", "first", 2),
+        }),
+      ],
+      unnestedThreadKeys: new Set([`${environmentId}:second`]),
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(new Set(layout.items.map((item) => item.thread.id))).toEqual(
+      new Set(["child", "first", "second"]),
+    );
+    expect(layout.items.find((item) => item.thread.id === "second")).toMatchObject({
+      depth: 0,
+      visuallyUnnested: true,
+    });
   });
 });
 

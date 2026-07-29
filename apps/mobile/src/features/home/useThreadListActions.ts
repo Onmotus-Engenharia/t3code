@@ -22,7 +22,14 @@ function environmentSupportsSettlement(environmentId: EnvironmentThreadShell["en
   );
 }
 
-type ThreadListAction = "archive" | "unarchive" | "delete" | "settle" | "unsettle";
+function environmentSupportsSnooze(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadSnooze === true
+  );
+}
+
+type ThreadListAction = "archive" | "unarchive" | "delete" | "settle" | "unsettle" | "unsnooze";
 
 const ACTION_VERBS: Record<ThreadListAction, string> = {
   archive: "archived",
@@ -30,6 +37,7 @@ const ACTION_VERBS: Record<ThreadListAction, string> = {
   delete: "deleted",
   settle: "settled",
   unsettle: "un-settled",
+  unsnooze: "woken",
 };
 
 function actionFailureMessage(action: ThreadListAction, cause: Cause.Cause<unknown>): string {
@@ -49,6 +57,7 @@ function actionFailureTitle(action: ThreadListAction): string {
   if (action === "unarchive") return "Could not unarchive thread";
   if (action === "settle") return "Could not settle thread";
   if (action === "unsettle") return "Could not un-settle thread";
+  if (action === "unsnooze") return "Could not wake thread";
   return "Could not delete thread";
 }
 
@@ -61,6 +70,7 @@ function useThreadActionExecutor(
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const settleMutation = useAtomCommand(threadEnvironment.settle, { reportFailure: false });
   const unsettleMutation = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
+  const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const inFlightThreadKeys = useRef(new Set<string>());
 
   const executeAction = useCallback(
@@ -80,6 +90,13 @@ function useThreadActionExecutor(
           Alert.alert(
             actionFailureTitle(action),
             "This environment's server does not support settling yet. Update the server to use Settle.",
+          );
+          return false;
+        }
+        if (action === "unsnooze" && !environmentSupportsSnooze(thread.environmentId)) {
+          Alert.alert(
+            actionFailureTitle(action),
+            "This environment's server does not support snoozing yet. Update the server to wake this thread.",
           );
           return false;
         }
@@ -107,25 +124,30 @@ function useThreadActionExecutor(
           return false;
         }
         const result =
-          action === "unsettle"
-            ? // reason "user" pins the thread active: auto-settle stays
-              // suppressed until real activity clears the pin server-side.
-              await unsettleMutation({
+          action === "unsnooze"
+            ? await unsnoozeMutation({
                 environmentId: thread.environmentId,
                 input: { threadId: thread.id, reason: "user" },
               })
-            : await (
-                action === "settle"
-                  ? settleMutation
-                  : action === "archive"
-                    ? archiveMutation
-                    : action === "unarchive"
-                      ? unarchiveMutation
-                      : deleteMutation
-              )({
-                environmentId: thread.environmentId,
-                input: { threadId: thread.id },
-              });
+            : action === "unsettle"
+              ? // reason "user" pins the thread active: auto-settle stays
+                // suppressed until real activity clears the pin server-side.
+                await unsettleMutation({
+                  environmentId: thread.environmentId,
+                  input: { threadId: thread.id, reason: "user" },
+                })
+              : await (
+                  action === "settle"
+                    ? settleMutation
+                    : action === "archive"
+                      ? archiveMutation
+                      : action === "unarchive"
+                        ? unarchiveMutation
+                        : deleteMutation
+                )({
+                  environmentId: thread.environmentId,
+                  input: { threadId: thread.id },
+                });
         if (result._tag === "Failure") {
           Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return false;
@@ -148,6 +170,7 @@ function useThreadActionExecutor(
       settleMutation,
       unarchiveMutation,
       unsettleMutation,
+      unsnoozeMutation,
     ],
   );
 
@@ -193,6 +216,7 @@ export function useThreadListActions(): {
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
 
@@ -210,10 +234,14 @@ export function useThreadListActions(): {
     async (thread: EnvironmentThreadShell) => (await executeAction("unsettle", thread)) === true,
     [executeAction],
   );
+  const unsnoozeThread = useCallback(
+    async (thread: EnvironmentThreadShell) => (await executeAction("unsnooze", thread)) === true,
+    [executeAction],
+  );
 
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
 
-  return { archiveThread, confirmDeleteThread, settleThread, unsettleThread };
+  return { archiveThread, confirmDeleteThread, settleThread, unsettleThread, unsnoozeThread };
 }
 
 export function useArchivedThreadListActions(

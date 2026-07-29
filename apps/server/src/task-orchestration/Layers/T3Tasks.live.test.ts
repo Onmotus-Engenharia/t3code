@@ -381,6 +381,24 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       yield* call("interrupt", { threadId: "child" });
       yield* call("pin", { threadId: "child", pinned: true });
       yield* call("pin", { threadId: "child", pinned: false });
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "root"
+            ? {
+                ...candidate,
+                latestTurn: {
+                  turnId: TurnId.make("root-turn"),
+                  state: "running" as const,
+                  requestedAt: "2026-07-28T00:00:00.000Z",
+                  startedAt: "2026-07-28T00:00:00.000Z",
+                  completedAt: null,
+                  assistantMessageId: null,
+                },
+              }
+            : candidate,
+        ),
+      }));
       const created = yield* call("create", {
         tasks: [
           {
@@ -402,7 +420,13 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       NodeAssert.match(createdTasks[0]?.warning ?? "", /Shared workspace/);
 
       const dispatched = yield* Ref.get(commands);
-      NodeAssert.ok(dispatched.some((command) => command.type === "thread.task.create"));
+      NodeAssert.ok(
+        dispatched.some(
+          (command) =>
+            command.type === "thread.task.create" &&
+            command.taskRelation.rootTurnId === "root-turn",
+        ),
+      );
       NodeAssert.ok(dispatched.some((command) => command.type === "thread.turn.start"));
       NodeAssert.ok(dispatched.some((command) => command.type === "thread.turn.interrupt"));
       NodeAssert.ok(

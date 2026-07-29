@@ -24,7 +24,7 @@ import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { scopedProjectKey } from "../../lib/scopedEntities";
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
@@ -40,6 +40,8 @@ import { ThreadListV2PendingRow, ThreadListV2Row } from "../threads/thread-list-
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  threadListV2RootCascadeSteps,
+  visibleThreadListV2Items,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
@@ -94,6 +96,7 @@ interface HomeScreenProps {
   /** Resolves true iff the settle was dispatched and succeeded. */
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
+  readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
@@ -185,6 +188,15 @@ export function HomeScreen(props: HomeScreenProps) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const unnestedTaskKeys = useMemo(
+    () =>
+      new Set(
+        AsyncResult.isSuccess(preferencesResult)
+          ? (preferencesResult.value.threadListV2UnnestedTaskKeys ?? [])
+          : [],
+      ),
+    [preferencesResult],
+  );
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
@@ -425,18 +437,15 @@ export function HomeScreen(props: HomeScreenProps) {
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
-  const handleSettleThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      void props.onSettleThread(thread);
-    },
-    [props.onSettleThread],
-  );
   const handleDeleteThread = props.onDeleteThread;
   const handleUnsettleThread = props.onUnsettleThread;
   // The settled tail renders in pages; expansion resets when the filter
   // context changes so environment/search flips never inherit a deep page.
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
+  );
+  const [collapsedTaskRootKeys, setCollapsedTaskRootKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
   );
   const settledResetKey = `${props.selectedEnvironmentId ?? "all"}:${v2ProjectScopeKey ?? "all"}:${props.searchQuery.trim()}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
@@ -498,6 +507,7 @@ export function HomeScreen(props: HomeScreenProps) {
       searchQuery: props.searchQuery,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      unnestedThreadKeys: unnestedTaskKeys,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
       snoozeNow: new Date().toISOString(),
@@ -512,8 +522,61 @@ export function HomeScreen(props: HomeScreenProps) {
     props.selectedEnvironmentId,
     props.threads,
     threadListV2Enabled,
+    unnestedTaskKeys,
     v2ScopedProjectGroup,
   ]);
+  const v2ThreadByKey = useMemo(
+    () =>
+      new Map(
+        props.threads.map((thread) => [scopedThreadKey(thread.environmentId, thread.id), thread]),
+      ),
+    [props.threads],
+  );
+  const taskChildCountByRootKey = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of threadListV2Layout.items) {
+      if (item.threadKey === item.rootThreadKey) continue;
+      counts.set(item.rootThreadKey, (counts.get(item.rootThreadKey) ?? 0) + 1);
+    }
+    return counts;
+  }, [threadListV2Layout.items]);
+  const visibleThreadItems = useMemo(
+    () => visibleThreadListV2Items(threadListV2Layout.items, collapsedTaskRootKeys),
+    [collapsedTaskRootKeys, threadListV2Layout.items],
+  );
+  const toggleTaskTree = useCallback((rootThreadKey: string) => {
+    setCollapsedTaskRootKeys((current) => {
+      const next = new Set(current);
+      if (next.has(rootThreadKey)) next.delete(rootThreadKey);
+      else next.add(rootThreadKey);
+      return next;
+    });
+  }, []);
+  const handleSettleThread = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      const targetKey = scopedThreadKey(thread.environmentId, thread.id);
+      for (const step of threadListV2RootCascadeSteps(threadListV2Layout.items, targetKey)) {
+        const target = v2ThreadByKey.get(step.threadKey);
+        if (target === undefined) continue;
+        const succeeded =
+          step.action === "wake"
+            ? await props.onUnsnoozeThread(target)
+            : await props.onSettleThread(target);
+        if (!succeeded) break;
+      }
+    },
+    [props.onSettleThread, props.onUnsnoozeThread, threadListV2Layout.items, v2ThreadByKey],
+  );
+  const setTaskUnnested = useCallback(
+    (thread: EnvironmentThreadShell, unnested: boolean) => {
+      const next = new Set(unnestedTaskKeys);
+      const key = scopedThreadKey(thread.environmentId, thread.id);
+      if (unnested) next.add(key);
+      else next.delete(key);
+      savePreferences({ threadListV2UnnestedTaskKeys: [...next] });
+    },
+    [savePreferences, unnestedTaskKeys],
+  );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
@@ -551,10 +614,10 @@ export function HomeScreen(props: HomeScreenProps) {
   const threadListV2Items = useMemo(
     () =>
       buildThreadListV2ListItems({
-        items: threadListV2Layout.items,
+        items: visibleThreadItems,
         pendingTasks: v2PendingTasks,
       }),
-    [threadListV2Layout.items, v2PendingTasks],
+    [v2PendingTasks, visibleThreadItems],
   );
 
   const renderV2Item = useCallback(
@@ -586,6 +649,12 @@ export function HomeScreen(props: HomeScreenProps) {
         <ThreadListV2Row
           thread={thread}
           variant={item.item.variant}
+          lifecycle={item.item.lifecycle}
+          depth={item.item.depth}
+          hasTaskParent={item.item.hasTaskParent}
+          visuallyUnnested={item.item.visuallyUnnested}
+          taskChildCount={taskChildCountByRootKey.get(item.item.threadKey) ?? 0}
+          taskTreeExpanded={!collapsedTaskRootKeys.has(item.item.threadKey)}
           showSettledDivider={item.item.showSettledDivider}
           project={
             projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
@@ -613,6 +682,9 @@ export function HomeScreen(props: HomeScreenProps) {
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
           onSettleThread={handleSettleThread}
           onUnsettleThread={handleUnsettleThread}
+          onUnsnoozeThread={props.onUnsnoozeThread}
+          onSetTaskUnnested={setTaskUnnested}
+          onToggleTaskTree={toggleTaskTree}
           projectCwd={
             projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
           }
@@ -627,15 +699,20 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableClose,
       handleSwipeableWillOpen,
       handleUnsettleThread,
+      collapsedTaskRootKeys,
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,
       props.onDeletePendingTask,
       props.onSelectPendingTask,
       props.onSelectThread,
+      props.onUnsnoozeThread,
       props.savedConnectionsById,
       serverConfigs,
       settlementEnvironmentIds,
+      setTaskUnnested,
+      taskChildCountByRootKey,
+      toggleTaskTree,
       v2ProjectTitleByProjectKey,
     ],
   );
@@ -882,6 +959,7 @@ export function HomeScreen(props: HomeScreenProps) {
               projectTitleByProjectKey: v2ProjectTitleByProjectKey,
               serverConfigs,
               savedConnectionsById: props.savedConnectionsById,
+              collapsedTaskRootKeys,
             }}
             ListHeaderComponent={v2ListHeader}
             ListFooterComponent={

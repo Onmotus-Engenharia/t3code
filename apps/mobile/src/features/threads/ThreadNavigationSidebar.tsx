@@ -5,7 +5,8 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
@@ -24,6 +25,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
@@ -66,6 +68,8 @@ import { ThreadListV2PendingRow, ThreadListV2Row } from "./thread-list-v2-items"
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  threadListV2RootCascadeSteps,
+  visibleThreadListV2Items,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
@@ -188,9 +192,20 @@ function ThreadNavigationSidebarPane(
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const headerIsOverContentRef = useRef(false);
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
-  const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
+  const { archiveThread, confirmDeleteThread, settleThread, unsettleThread, unsnoozeThread } =
     useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const unnestedTaskKeys = useMemo(
+    () =>
+      new Set(
+        AsyncResult.isSuccess(preferences)
+          ? (preferences.value.threadListV2UnnestedTaskKeys ?? [])
+          : [],
+      ),
+    [preferences],
+  );
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -356,6 +371,9 @@ function ThreadNavigationSidebarPane(
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
+  const [collapsedTaskRootKeys, setCollapsedTaskRootKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${props.searchQuery.trim()}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
@@ -414,6 +432,7 @@ function ThreadNavigationSidebarPane(
       searchQuery: props.searchQuery,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      unnestedThreadKeys: unnestedTaskKeys,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
       snoozeNow: new Date().toISOString(),
@@ -429,7 +448,56 @@ function ThreadNavigationSidebarPane(
     threadListV2Enabled,
     threads,
     selectedProjectScope,
+    unnestedTaskKeys,
   ]);
+  const threadByKey = useMemo(
+    () =>
+      new Map(threads.map((thread) => [scopedThreadKey(thread.environmentId, thread.id), thread])),
+    [threads],
+  );
+  const taskChildCountByRootKey = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of threadListV2Layout.items) {
+      if (item.threadKey === item.rootThreadKey) continue;
+      counts.set(item.rootThreadKey, (counts.get(item.rootThreadKey) ?? 0) + 1);
+    }
+    return counts;
+  }, [threadListV2Layout.items]);
+  const visibleThreadItems = useMemo(
+    () => visibleThreadListV2Items(threadListV2Layout.items, collapsedTaskRootKeys),
+    [collapsedTaskRootKeys, threadListV2Layout.items],
+  );
+  const toggleTaskTree = useCallback((rootThreadKey: string) => {
+    setCollapsedTaskRootKeys((current) => {
+      const next = new Set(current);
+      if (next.has(rootThreadKey)) next.delete(rootThreadKey);
+      else next.add(rootThreadKey);
+      return next;
+    });
+  }, []);
+  const settleTaskTree = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      const targetKey = scopedThreadKey(thread.environmentId, thread.id);
+      for (const step of threadListV2RootCascadeSteps(threadListV2Layout.items, targetKey)) {
+        const target = threadByKey.get(step.threadKey);
+        if (target === undefined) continue;
+        const succeeded =
+          step.action === "wake" ? await unsnoozeThread(target) : await settleThread(target);
+        if (!succeeded) break;
+      }
+    },
+    [settleThread, threadByKey, threadListV2Layout.items, unsnoozeThread],
+  );
+  const setTaskUnnested = useCallback(
+    (thread: EnvironmentThreadShell, unnested: boolean) => {
+      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const next = new Set(unnestedTaskKeys);
+      if (unnested) next.add(key);
+      else next.delete(key);
+      savePreferences({ threadListV2UnnestedTaskKeys: [...next] });
+    },
+    [savePreferences, unnestedTaskKeys],
+  );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
@@ -464,7 +532,7 @@ function ThreadNavigationSidebarPane(
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
     const items: SidebarListItem[] = buildThreadListV2ListItems({
-      items: threadListV2Layout.items,
+      items: visibleThreadItems,
       pendingTasks: v2PendingTasks,
     });
     if (threadListV2Layout.hiddenSettledCount > 0) {
@@ -483,6 +551,7 @@ function ThreadNavigationSidebarPane(
     selectedProjectRefs,
     threadListV2Enabled,
     threadListV2Layout,
+    visibleThreadItems,
   ]);
   const showsConnectionStatus = shouldShowWorkspaceConnectionStatus(catalogState);
   const listMenuActions = useMemo<MenuAction[]>(
@@ -665,6 +734,7 @@ function ThreadNavigationSidebarPane(
       projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
+      collapsedTaskRootKeys,
     }),
     [
       props.selectedThreadKey,
@@ -673,6 +743,7 @@ function ThreadNavigationSidebarPane(
       projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
+      collapsedTaskRootKeys,
     ],
   );
   const sidebarItemsAreEqual = useCallback(
@@ -682,7 +753,10 @@ function ThreadNavigationSidebarPane(
           previous.key === item.key &&
           previous.item.thread === item.item.thread &&
           previous.item.variant === item.item.variant &&
-          previous.item.showSettledDivider === item.item.showSettledDivider
+          previous.item.lifecycle === item.item.lifecycle &&
+          previous.item.showSettledDivider === item.item.showSettledDivider &&
+          previous.item.depth === item.item.depth &&
+          previous.item.visuallyUnnested === item.item.visuallyUnnested
         );
       }
       if (previous.type === "v2-show-more" && item.type === "v2-show-more") {
@@ -758,6 +832,12 @@ function ThreadNavigationSidebarPane(
             <ThreadListV2Row
               thread={thread}
               variant={item.item.variant}
+              lifecycle={item.item.lifecycle}
+              depth={item.item.depth}
+              hasTaskParent={item.item.hasTaskParent}
+              visuallyUnnested={item.item.visuallyUnnested}
+              taskChildCount={taskChildCountByRootKey.get(item.item.threadKey) ?? 0}
+              taskTreeExpanded={!collapsedTaskRootKeys.has(item.item.threadKey)}
               showSettledDivider={item.item.showSettledDivider}
               project={projectByKey.get(scopeKey) ?? null}
               projectTitle={projectTitleByProjectKey.get(scopeKey)}
@@ -784,8 +864,11 @@ function ThreadNavigationSidebarPane(
               onDeleteThread={confirmDeleteThread}
               onArchiveThread={archiveThread}
               settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
-              onSettleThread={settleThread}
+              onSettleThread={settleTaskTree}
               onUnsettleThread={unsettleThread}
+              onUnsnoozeThread={unsnoozeThread}
+              onSetTaskUnnested={setTaskUnnested}
+              onToggleTaskTree={toggleTaskTree}
               projectCwd={projectCwdByKey.get(scopeKey) ?? null}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -894,12 +977,18 @@ function ThreadNavigationSidebarPane(
       props.width,
       savedConnectionsById,
       serverConfigs,
+      collapsedTaskRootKeys,
       settleThread,
+      settleTaskTree,
+      setTaskUnnested,
+      taskChildCountByRootKey,
       settlementEnvironmentIds,
       showMoreSettled,
       sidebarScrollGesture,
       unsettleThread,
+      unsnoozeThread,
       updateGroupDisplay,
+      toggleTaskTree,
     ],
   );
   // v2 ignores the sort/group options, so only the environment filter can

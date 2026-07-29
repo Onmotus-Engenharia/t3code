@@ -8,6 +8,7 @@ import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -17,7 +18,12 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import { resolveThreadListV2Status, type ThreadListV2Status } from "./threadListV2";
+import {
+  resolveThreadListV2Status,
+  threadListV2LifecycleAction,
+  type ThreadListV2Status,
+  type ThreadSection,
+} from "./threadListV2";
 
 /**
  * Thread List v2 renders one flat native list: rich edge-to-edge rows for
@@ -57,6 +63,11 @@ const CARD_MENU_ACTIONS: MenuAction[] = [
 
 const SLIM_MENU_ACTIONS: MenuAction[] = [
   { id: "unsettle", title: "Un-settle", image: "arrow.uturn.backward" },
+  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+];
+
+const SNOOZED_MENU_ACTIONS: MenuAction[] = [
+  { id: "wake", title: "Wake", image: "sunrise" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
@@ -206,7 +217,15 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
+  readonly lifecycle: ThreadSection;
   readonly showSettledDivider: boolean;
+  readonly depth?: number;
+  readonly hasTaskParent?: boolean;
+  readonly visuallyUnnested?: boolean;
+  readonly onSetTaskUnnested?: (thread: EnvironmentThreadShell, unnested: boolean) => void;
+  readonly taskChildCount?: number;
+  readonly taskTreeExpanded?: boolean;
+  readonly onToggleTaskTree?: (rootThreadKey: string) => void;
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
   readonly providerDriver: string | null;
@@ -230,6 +249,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
+  readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   /** False on environments whose server predates thread.settle/unsettle:
       swipe + menu fall back to Archive instead of failing on use. */
@@ -249,7 +269,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onDeleteThread,
     onSettleThread,
     onUnsettleThread,
+    onUnsnoozeThread,
     onArchiveThread,
+    onSetTaskUnnested,
   } = props;
 
   const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
@@ -258,6 +280,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const drawerColor = useThemeColor("--color-drawer");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
+  const iconSubtleColor = useThemeColor("--color-foreground-muted");
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
 
@@ -269,20 +292,61 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const handleUnsettle = useCallback(() => onUnsettleThread(thread), [onUnsettleThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const handleUnsnooze = useCallback(() => onUnsnoozeThread(thread), [onUnsnoozeThread, thread]);
+  const handleToggleTaskTree = useCallback(
+    () => props.onToggleTaskTree?.(`${thread.environmentId}:${thread.id}`),
+    [props.onToggleTaskTree, thread.environmentId, thread.id],
+  );
+  const lifecycleAction = threadListV2LifecycleAction(props.lifecycle);
+  const canUnsettle = lifecycleAction === "unsettle";
+  const canWake = lifecycleAction === "wake";
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "archive") handleArchive();
+      if (nativeEvent.event === "wake") handleUnsnooze();
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event === "unnest-task") onSetTaskUnnested?.(thread, true);
+      if (nativeEvent.event === "renest-task") onSetTaskUnnested?.(thread, false);
     },
-    [handleArchive, handleDelete, handleSettle, handleUnsettle],
+    [
+      handleArchive,
+      handleDelete,
+      handleSettle,
+      handleUnsnooze,
+      handleUnsettle,
+      onSetTaskUnnested,
+      thread,
+    ],
   );
+  const menuActions = useMemo(() => {
+    const lifecycle = !props.settlementSupported
+      ? LEGACY_MENU_ACTIONS
+      : canWake
+        ? SNOOZED_MENU_ACTIONS
+        : canUnsettle
+          ? SLIM_MENU_ACTIONS
+          : CARD_MENU_ACTIONS;
+    if (!props.hasTaskParent) return lifecycle;
+    return [
+      ...lifecycle.slice(0, -1),
+      props.visuallyUnnested
+        ? { id: "renest-task", title: "Nest under parent", image: "arrow.turn.down.right" }
+        : { id: "unnest-task", title: "Show as root", image: "arrow.turn.up.right" },
+      ...lifecycle.slice(-1),
+    ] satisfies MenuAction[];
+  }, [
+    canUnsettle,
+    canWake,
+    props.hasTaskParent,
+    props.settlementSupported,
+    props.visuallyUnnested,
+  ]);
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
   // row can un-settle — explicit settles clear the override, auto-settled
   // rows get pinned active until real activity clears the pin.
-  const canUnsettle = variant === "slim";
   const primaryAction = useMemo(() => {
     // Pre-settlement server: archive is the swipe action, as in v1. (Slim
     // rows cannot occur here — unsupported environments never classify as
@@ -295,33 +359,66 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onPress: handleArchive,
       };
     }
-    return canUnsettle
+    return canWake
       ? {
-          accessibilityLabel: `Un-settle ${thread.title}`,
-          icon: "arrow.uturn.backward" as const,
-          label: "Un-settle",
-          onPress: handleUnsettle,
+          accessibilityLabel: `Wake ${thread.title}`,
+          icon: "sunrise" as const,
+          label: "Wake",
+          onPress: handleUnsnooze,
         }
-      : {
-          accessibilityLabel: `Settle ${thread.title}`,
-          icon: "checkmark" as const,
-          label: "Settle",
-          onPress: handleSettle,
-        };
+      : canUnsettle
+        ? {
+            accessibilityLabel: `Un-settle ${thread.title}`,
+            icon: "arrow.uturn.backward" as const,
+            label: "Un-settle",
+            onPress: handleUnsettle,
+          }
+        : {
+            accessibilityLabel: `Settle ${thread.title}`,
+            icon: "checkmark" as const,
+            label: "Settle",
+            onPress: handleSettle,
+          };
   }, [
     canUnsettle,
+    canWake,
     handleArchive,
     handleSettle,
+    handleUnsnooze,
     handleUnsettle,
     props.settlementSupported,
     thread.title,
   ]);
+
+  const taskTreeToggle =
+    (props.depth ?? 0) === 0 && (props.taskChildCount ?? 0) > 0 ? (
+      <Pressable
+        accessibilityLabel={`${props.taskTreeExpanded === false ? "Expand" : "Collapse"} ${
+          props.taskChildCount
+        } task${props.taskChildCount === 1 ? "" : "s"}`}
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={(event) => {
+          event.stopPropagation();
+          handleToggleTaskTree();
+        }}
+        className="size-6 items-center justify-center"
+      >
+        <SymbolView
+          name={props.taskTreeExpanded === false ? "chevron.right" : "chevron.down"}
+          size={12}
+          tintColor={selected ? "#ffffff" : iconSubtleColor}
+          type="monochrome"
+        />
+      </Pressable>
+    ) : null;
 
   // The sidebar pane fills selected rows with the accent color (matching the
   // v1 sidebar), so every piece of row text needs a white-on-accent variant.
   const cardContent = (
     <>
       <View className="flex-row items-center gap-1.5">
+        {taskTreeToggle}
         {props.project ? (
           <ProjectFavicon
             environmentId={thread.environmentId}
@@ -436,9 +533,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           close();
           onSelectThread(thread);
         }}
-        style={
-          sidebarPane
-            ? ({ pressed }) => ({
+        style={({ pressed }) => ({
+          marginLeft: Math.min(props.depth ?? 0, 3) * 14,
+          ...(sidebarPane
+            ? {
                 backgroundColor: selected
                   ? selectedBackgroundColor
                   : pressed
@@ -447,9 +545,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 borderRadius: SIDEBAR_V2_ROW_RADIUS,
                 paddingHorizontal: 12,
                 paddingVertical: 10,
-              })
-            : ({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })
-        }
+              }
+            : { opacity: pressed ? 0.7 : 1 }),
+        })}
       >
         {sidebarPane ? (
           cardContent
@@ -475,18 +573,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           close();
           onSelectThread(thread);
         }}
-        style={
-          sidebarPane
-            ? ({ pressed }) => ({
+        style={({ pressed }) => ({
+          marginLeft: Math.min(props.depth ?? 0, 3) * 14,
+          ...(sidebarPane
+            ? {
                 backgroundColor: selected
                   ? selectedBackgroundColor
                   : pressed
                     ? pressedBackgroundColor
                     : drawerColor,
                 borderRadius: SIDEBAR_V2_ROW_RADIUS,
-              })
-            : ({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })
-        }
+              }
+            : { opacity: pressed ? 0.7 : 1 }),
+        })}
       >
         {/* Settled history recedes: dimmed favicon + muted title. */}
         <View
@@ -495,6 +594,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             sidebarPane ? "px-3" : "px-5",
           )}
         >
+          {taskTreeToggle}
           {props.project ? (
             <View className="opacity-40">
               <ProjectFavicon
@@ -553,13 +653,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {(close) => (
           <ControlPillMenu
-            actions={
-              !props.settlementSupported
-                ? LEGACY_MENU_ACTIONS
-                : canUnsettle
-                  ? SLIM_MENU_ACTIONS
-                  : CARD_MENU_ACTIONS
-            }
+            actions={menuActions}
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >

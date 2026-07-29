@@ -30,6 +30,7 @@ export interface Preferences {
    * see `resolveThreadListV2Enabled`.
    */
   readonly threadListV2Enabled?: boolean;
+  readonly threadListV2UnnestedTaskKeys?: readonly string[];
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -81,6 +82,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
     threadListV2Enabled?: boolean;
+    threadListV2UnnestedTaskKeys?: readonly string[];
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -112,6 +114,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;
+  }
+  if (Array.isArray(parsed.threadListV2UnnestedTaskKeys)) {
+    preferences.threadListV2UnnestedTaskKeys = parsed.threadListV2UnnestedTaskKeys.filter(
+      (key): key is string => typeof key === "string",
+    );
   }
   return preferences;
 }

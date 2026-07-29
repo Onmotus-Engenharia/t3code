@@ -85,6 +85,7 @@ export const executeCreate = Effect.fn("T3Tasks.executeCreate")(function* (input
     });
     const workspaceMode = resolveWorkspaceMode(optionalString(task, "workspaceMode"));
     const pinned = optionalBoolean(task, "pinned") ?? false;
+    const rootTurnId = input.caller.taskRelation?.rootTurnId ?? input.caller.latestTurn?.turnId;
     const modelSelection = validateTaskModelSelection(
       input.providerSnapshots,
       input.caller.modelSelection,
@@ -136,6 +137,7 @@ export const executeCreate = Effect.fn("T3Tasks.executeCreate")(function* (input
       taskRelation: {
         parentThreadId: input.caller.id,
         rootThreadId: taskRootId(input.caller),
+        ...(rootTurnId !== undefined ? { rootTurnId } : {}),
         depth: childDepth,
         workspaceMode,
         createdBy: "agent",

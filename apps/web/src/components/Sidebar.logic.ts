@@ -601,6 +601,15 @@ export function sidebarTaskTreeSettleOrder<T>(
   ];
 }
 
+export function visibleSidebarTaskTreeRows<T>(
+  groups: ReadonlyArray<SidebarTaskTreeGroup<T>>,
+  collapsedRootThreadKeys: ReadonlySet<string>,
+): readonly SidebarTaskTreeRow<T>[] {
+  return groups.flatMap((group) =>
+    collapsedRootThreadKeys.has(group.rootThreadKey) ? group.rows.slice(0, 1) : group.rows,
+  );
+}
+
 type SettledTimestampInput = Pick<
   SidebarThreadSummary,
   "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"

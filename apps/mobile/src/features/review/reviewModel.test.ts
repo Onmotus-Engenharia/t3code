@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   MessageId,
+  ThreadId,
   TurnId,
   type OrchestrationCheckpointSummary,
   type ReviewDiffPreviewSource,
@@ -132,6 +133,47 @@ describe("buildReviewSectionItems", () => {
       }),
     ]);
     expect(getDefaultReviewSectionId(items)).toBe("git:working-tree");
+  });
+
+  it("counts root and descendant checkpoint files in the mobile review summary", () => {
+    const checkpoint = makeCheckpoint({
+      turnId: TurnId.make("root-turn"),
+      checkpointTurnCount: 3,
+      completedAt: "2026-04-03T00:00:00.000Z",
+      files: [
+        { path: "root.ts", kind: "modified", additions: 2, deletions: 1 },
+        {
+          path: "child.ts",
+          kind: "added",
+          additions: 5,
+          deletions: 0,
+          sources: [
+            {
+              threadId: ThreadId.make("child-thread"),
+              fromTurnCount: 0,
+              toTurnCount: 2,
+            },
+          ],
+        },
+      ],
+    });
+    const id = getReviewSectionIdForCheckpoint(checkpoint);
+
+    expect(
+      buildReviewSectionItems({
+        checkpoints: [checkpoint],
+        gitSections: [],
+        turnDiffById: { [id]: "diff --git a/root.ts b/root.ts" },
+        loadingTurnIds: {},
+        loadingGitSections: false,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        id,
+        subtitle: "2 files changed",
+        diff: expect.stringContaining("root.ts"),
+      }),
+    ]);
   });
 });
 

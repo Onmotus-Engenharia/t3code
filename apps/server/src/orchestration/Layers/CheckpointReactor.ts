@@ -21,6 +21,10 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
+  mergeCheckpointFiles,
+  selectOrchestratedCheckpointSources,
+} from "../../checkpointing/OrchestratedDiffs.ts";
+import {
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
@@ -212,6 +216,68 @@ const make = Effect.gen(function* () {
     return cwd;
   });
 
+  const readOrchestratedTaskFiles = Effect.fn("readOrchestratedTaskFiles")(function* (input: {
+    readonly rootThreadId: ThreadId;
+    readonly rootTurnId: TurnId;
+  }) {
+    const snapshot = yield* projectionSnapshotQuery.getSnapshot();
+    const sources = selectOrchestratedCheckpointSources({
+      rootThreadId: input.rootThreadId,
+      rootTurnId: input.rootTurnId,
+      threads: snapshot.threads,
+    });
+
+    return yield* Effect.forEach(
+      sources,
+      (source) =>
+        Effect.gen(function* () {
+          const thread = snapshot.threads.find((entry) => entry.id === source.threadId);
+          const targetCheckpoint = thread?.checkpoints.find(
+            (checkpoint) => checkpoint.checkpointTurnCount === source.toTurnCount,
+          );
+          if (thread === undefined || targetCheckpoint === undefined) {
+            return [];
+          }
+          const projects = snapshot.projects.filter((project) => project.id === thread.projectId);
+          const cwd = yield* resolveCheckpointCwd({
+            threadId: thread.id,
+            thread,
+            projects,
+            preferSessionRuntime: false,
+          });
+          if (cwd === undefined) {
+            return [];
+          }
+
+          const diff = yield* checkpointStore.diffCheckpoints({
+            cwd,
+            fromCheckpointRef: checkpointRefForThreadTurn(thread.id, source.fromTurnCount),
+            toCheckpointRef: targetCheckpoint.checkpointRef,
+            fallbackFromToHead: false,
+            ignoreWhitespace: false,
+          });
+          return parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
+            path: file.path,
+            kind: "modified" as const,
+            additions: file.additions,
+            deletions: file.deletions,
+            sources: [source],
+          }));
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to include orchestrated task checkpoint", {
+              rootThreadId: input.rootThreadId,
+              rootTurnId: input.rootTurnId,
+              sourceThreadId: source.threadId,
+              sourceToTurnCount: source.toTurnCount,
+              detail: error instanceof Error ? error.message : String(error),
+            }).pipe(Effect.as([])),
+          ),
+        ),
+      { concurrency: 4 },
+    );
+  });
+
   // Shared tail for both capture paths: creates the git checkpoint ref, diffs
   // it against the previous turn, then dispatches the domain events to update
   // the orchestration read model.
@@ -219,6 +285,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly turnId: TurnId;
     readonly thread: {
+      readonly taskRelation: { readonly rootThreadId: ThreadId } | null;
       readonly messages: ReadonlyArray<{
         readonly id: MessageId;
         readonly role: string;
@@ -256,7 +323,7 @@ const make = Effect.gen(function* () {
     // reflects files created or deleted during this turn.
     yield* workspaceEntries.refresh(input.cwd);
 
-    const files = yield* checkpointStore
+    const ownFiles = yield* checkpointStore
       .diffCheckpoints({
         cwd: input.cwd,
         fromCheckpointRef,
@@ -290,6 +357,14 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as([])),
         ),
       );
+    const orchestratedFiles =
+      input.thread.taskRelation === null
+        ? yield* readOrchestratedTaskFiles({
+            rootThreadId: input.threadId,
+            rootTurnId: input.turnId,
+          })
+        : [];
+    const files = mergeCheckpointFiles([ownFiles, ...orchestratedFiles]);
 
     const assistantMessageId =
       input.assistantMessageId ??

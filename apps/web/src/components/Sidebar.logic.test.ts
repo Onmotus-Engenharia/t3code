@@ -21,6 +21,7 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   sidebarTaskTreeSettleOrder,
+  visibleSidebarTaskTreeRows,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -798,6 +799,29 @@ describe("buildSidebarTaskTree", () => {
       "local:root",
     ]);
     expect(sidebarTaskTreeSettleOrder(undefined, "local:child")).toEqual(["local:child"]);
+  });
+
+  it("collapses descendants under a root while remaining expanded by default", () => {
+    const root = task("root", null);
+    const child = task("child", "root");
+    const grandchild = task("grandchild", "child");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [root, child, grandchild],
+      snoozedThreads: [],
+      settledThreads: [],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    expect(visibleSidebarTaskTreeRows(tree.active, new Set()).map((row) => row.thread.id)).toEqual([
+      "root",
+      "child",
+      "grandchild",
+    ]);
+    expect(
+      visibleSidebarTaskTreeRows(tree.active, new Set(["local:root"])).map((row) => row.thread.id),
+    ).toEqual(["root"]);
   });
 });
 

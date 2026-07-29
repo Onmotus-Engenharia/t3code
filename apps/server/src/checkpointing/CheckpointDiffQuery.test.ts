@@ -1,4 +1,10 @@
-import { CheckpointRef, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  type OrchestrationCheckpointFile,
+  ProjectId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,6 +24,7 @@ function makeThreadCheckpointContext(input: {
   readonly worktreePath: string | null;
   readonly checkpointTurnCount: number;
   readonly checkpointRef: CheckpointRef;
+  readonly files?: ReadonlyArray<OrchestrationCheckpointFile>;
 }): ProjectionSnapshotQuery.ProjectionThreadCheckpointContext {
   return {
     threadId: input.threadId,
@@ -30,7 +37,7 @@ function makeThreadCheckpointContext(input: {
         checkpointTurnCount: input.checkpointTurnCount,
         checkpointRef: input.checkpointRef,
         status: "ready",
-        files: [],
+        files: [...(input.files ?? [])],
         assistantMessageId: null,
         completedAt: "2026-01-01T00:00:00.000Z",
       },
@@ -230,6 +237,94 @@ describe("CheckpointDiffQuery.layer", () => {
         toTurnCount: 1,
         diff: "diff patch",
       });
+    }),
+  );
+
+  it.effect("appends frozen isolated-task checkpoint patches to a root turn diff", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-orchestrated");
+      const rootThreadId = ThreadId.make("root");
+      const childThreadId = ThreadId.make("child");
+      const rootCheckpointRef = checkpointRefForThreadTurn(rootThreadId, 1);
+      const childCheckpointRef = checkpointRefForThreadTurn(childThreadId, 2);
+      const childSource = {
+        threadId: childThreadId,
+        fromTurnCount: 0,
+        toTurnCount: 2,
+      };
+      const rootContext = makeThreadCheckpointContext({
+        projectId,
+        threadId: rootThreadId,
+        workspaceRoot: "/tmp/root",
+        worktreePath: null,
+        checkpointTurnCount: 1,
+        checkpointRef: rootCheckpointRef,
+        files: [
+          {
+            path: "src/child.ts",
+            kind: "modified",
+            additions: 4,
+            deletions: 1,
+            sources: [childSource],
+          },
+        ],
+      });
+      const childContext = makeThreadCheckpointContext({
+        projectId,
+        threadId: childThreadId,
+        workspaceRoot: "/tmp/root",
+        worktreePath: "/tmp/child",
+        checkpointTurnCount: 2,
+        checkpointRef: childCheckpointRef,
+      });
+      const diffCheckpointsCalls: string[] = [];
+      const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
+        isGitRepository: () => Effect.succeed(true),
+        captureCheckpoint: () => Effect.void,
+        hasCheckpointRef: () => Effect.succeed(true),
+        restoreCheckpoint: () => Effect.succeed(true),
+        diffCheckpoints: ({ cwd }) =>
+          Effect.sync(() => {
+            diffCheckpointsCalls.push(cwd);
+            return cwd === "/tmp/child" ? "child patch\n" : "root patch\n";
+          }),
+        deleteCheckpointRefs: () => Effect.void,
+      };
+      const layer = CheckpointDiffQuery.layer.pipe(
+        Layer.provideMerge(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+            getCommandReadModel: () => Effect.die("unused"),
+            getSnapshot: () => Effect.die("unused"),
+            getShellSnapshot: () => Effect.die("unused"),
+            getArchivedShellSnapshot: () => Effect.die("unused"),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+            getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+            getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            getProjectShellById: () => Effect.succeed(Option.none()),
+            getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+            getThreadCheckpointContext: (threadId: ThreadId) =>
+              Effect.succeed(Option.some(threadId === rootThreadId ? rootContext : childContext)),
+            getFullThreadDiffContext: () => Effect.die("unused"),
+            getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          }),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId: rootThreadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+          ignoreWhitespace: false,
+        });
+      }).pipe(Effect.provide(layer));
+
+      expect(diffCheckpointsCalls).toEqual(["/tmp/root", "/tmp/child"]);
+      expect(result.diff).toBe("root patch\nchild patch");
     }),
   );
 

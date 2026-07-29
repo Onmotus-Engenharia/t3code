@@ -288,11 +288,19 @@ export const OrchestrationSession = Schema.Struct({
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
 
+export const OrchestrationCheckpointFileSource = Schema.Struct({
+  threadId: ThreadId,
+  fromTurnCount: NonNegativeInt,
+  toTurnCount: NonNegativeInt,
+});
+export type OrchestrationCheckpointFileSource = typeof OrchestrationCheckpointFileSource.Type;
+
 export const OrchestrationCheckpointFile = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: TrimmedNonEmptyString,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
+  sources: Schema.optional(Schema.Array(OrchestrationCheckpointFileSource)),
 });
 export type OrchestrationCheckpointFile = typeof OrchestrationCheckpointFile.Type;
 

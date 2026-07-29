@@ -7,6 +7,7 @@
  * @module CheckpointDiffQuery
  */
 import {
+  type OrchestrationCheckpointFileSource,
   type CheckpointRef,
   OrchestrationGetTurnDiffResult,
   type OrchestrationGetFullThreadDiffInput,
@@ -31,6 +32,7 @@ import {
 } from "./Errors.ts";
 import type { CheckpointServiceError } from "./Errors.ts";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { checkpointFileSources, joinCheckpointDiffs } from "./OrchestratedDiffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 /** Service tag for checkpoint diff queries. */
@@ -78,6 +80,79 @@ function buildTurnDiffResult(
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+  const readCheckpointSourceDiff = Effect.fn("readCheckpointSourceDiff")(function* (input: {
+    readonly operation: "CheckpointDiffQuery.getTurnDiff";
+    readonly source: OrchestrationCheckpointFileSource;
+    readonly ignoreWhitespace: boolean;
+  }) {
+    if (input.source.fromTurnCount === input.source.toTurnCount) {
+      return "";
+    }
+    const context = yield* projectionSnapshotQuery.getThreadCheckpointContext(
+      input.source.threadId,
+    );
+    if (Option.isNone(context)) {
+      return yield* new CheckpointThreadNotFoundError({
+        operation: input.operation,
+        threadId: input.source.threadId,
+      });
+    }
+
+    const maxTurnCount = context.value.checkpoints.reduce(
+      (max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount),
+      0,
+    );
+    if (input.source.toTurnCount > maxTurnCount) {
+      return yield* new CheckpointTurnRangeUnavailableError({
+        operation: input.operation,
+        threadId: input.source.threadId,
+        requestedTurnCount: input.source.toTurnCount,
+        availableTurnCount: maxTurnCount,
+      });
+    }
+
+    const fromCheckpointRef =
+      input.source.fromTurnCount === 0
+        ? checkpointRefForThreadTurn(input.source.threadId, 0)
+        : context.value.checkpoints.find(
+            (checkpoint) => checkpoint.checkpointTurnCount === input.source.fromTurnCount,
+          )?.checkpointRef;
+    if (fromCheckpointRef === undefined) {
+      return yield* new CheckpointRefUnavailableError({
+        operation: input.operation,
+        threadId: input.source.threadId,
+        turnCount: input.source.fromTurnCount,
+        checkpoint: "from",
+      });
+    }
+    const toCheckpointRef = context.value.checkpoints.find(
+      (checkpoint) => checkpoint.checkpointTurnCount === input.source.toTurnCount,
+    )?.checkpointRef;
+    if (toCheckpointRef === undefined) {
+      return yield* new CheckpointRefUnavailableError({
+        operation: input.operation,
+        threadId: input.source.threadId,
+        turnCount: input.source.toTurnCount,
+        checkpoint: "to",
+      });
+    }
+
+    const cwd = context.value.worktreePath ?? context.value.workspaceRoot;
+    if (!cwd) {
+      return yield* new CheckpointWorkspacePathMissingError({
+        operation: input.operation,
+        threadId: input.source.threadId,
+      });
+    }
+    return yield* checkpointStore.diffCheckpoints({
+      cwd,
+      fromCheckpointRef,
+      toCheckpointRef,
+      fallbackFromToHead: false,
+      ignoreWhitespace: input.ignoreWhitespace,
+    });
+  });
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -174,7 +249,23 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      const targetCheckpoint = threadContext.value.checkpoints.find(
+        (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
+      );
+      const sourceDiffs =
+        targetCheckpoint === undefined
+          ? []
+          : yield* Effect.forEach(
+              checkpointFileSources(targetCheckpoint.files),
+              (source) =>
+                readCheckpointSourceDiff({
+                  operation,
+                  source,
+                  ignoreWhitespace,
+                }),
+              { concurrency: 4 },
+            );
+      const turnDiff = buildTurnDiffResult(input, joinCheckpointDiffs([diff, ...sourceDiffs]));
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,
