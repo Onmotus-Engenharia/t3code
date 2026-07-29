@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./providerRateLimits": {
+      "types": "./src/providerRateLimits.ts",
+      "import": "./src/providerRateLimits.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"

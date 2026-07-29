@@ -113,6 +113,7 @@ import {
 } from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
+  ProviderRateLimitsStreamEvent,
   ServerConfig,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
@@ -233,6 +234,7 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeServerConfig: "subscribeServerConfig",
+  subscribeProviderRateLimits: "subscribeProviderRateLimits",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
 } as const;
@@ -690,6 +692,13 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsSubscribeProviderRateLimitsRpc = Rpc.make(WS_METHODS.subscribeProviderRateLimits, {
+  payload: Schema.Struct({}),
+  success: ProviderRateLimitsStreamEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -752,6 +761,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,
+  WsSubscribeProviderRateLimitsRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsOrchestrationDispatchCommandRpc,

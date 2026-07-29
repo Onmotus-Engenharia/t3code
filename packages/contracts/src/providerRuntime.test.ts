@@ -181,4 +181,27 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
   });
+
+  it("decodes normalized account rate limits", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "account.rate-limits.updated",
+      eventId: "event-rate-limits-1",
+      provider: "codex",
+      providerInstanceId: "codex_personal",
+      createdAt: "2026-02-28T00:00:04.000Z",
+      threadId: "thread-1",
+      payload: {
+        rateLimits: {
+          primary: { usedPercent: 42, resetsAt: 1_800_000_000, windowDurationMins: 300 },
+          secondary: { usedPercent: 9, windowDurationMins: 10_080 },
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("account.rate-limits.updated");
+    if (parsed.type !== "account.rate-limits.updated") throw new Error("unexpected event");
+    expect(parsed.providerInstanceId).toBe("codex_personal");
+    expect(parsed.payload.rateLimits.primary?.usedPercent).toBe(42);
+    expect(parsed.payload.rateLimits.secondary?.windowDurationMins).toBe(10_080);
+  });
 });

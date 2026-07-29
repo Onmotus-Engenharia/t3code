@@ -46,9 +46,11 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { codexRateLimitsAtom } from "../../state/server";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
+import { CodexUsageSettingsSection } from "./components/CodexUsageSettingsSection";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
@@ -106,6 +108,7 @@ export function SettingsRouteScreen() {
 
 function LocalSettingsRouteScreen() {
   const insets = useSafeAreaInsets();
+  const codexRateLimits = useAtomValue(codexRateLimitsAtom);
   const { savedConnectionsById } = useSavedRemoteConnections();
   const environmentCount = Object.keys(savedConnectionsById).length;
 
@@ -120,6 +123,8 @@ function LocalSettingsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
+        <CodexUsageSettingsSection rateLimits={codexRateLimits} />
+
         <SettingsSection title="Configuration">
           <SettingsRow
             icon="desktopcomputer"
@@ -147,6 +152,7 @@ function LocalSettingsRouteScreen() {
 
 function ConfiguredSettingsRouteScreen() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const codexRateLimits = useAtomValue(codexRateLimitsAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const agentAwarenessPushAvailable = supportsAgentAwarenessPush();
   const insets = useSafeAreaInsets();
@@ -460,6 +466,8 @@ function ConfiguredSettingsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
+        <CodexUsageSettingsSection rateLimits={codexRateLimits} />
+
         <View className="gap-3">
           <SettingsSection title="Account">
             <SettingsRow

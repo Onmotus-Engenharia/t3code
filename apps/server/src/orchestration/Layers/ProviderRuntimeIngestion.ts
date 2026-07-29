@@ -38,6 +38,7 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderRateLimitsState } from "../../provider/Services/ProviderRateLimitsState.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -1292,6 +1293,10 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
+      const providerRateLimits = yield* Effect.serviceOption(ProviderRateLimitsState);
+      if (Option.isSome(providerRateLimits)) {
+        yield* providerRateLimits.value.update(event);
+      }
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 

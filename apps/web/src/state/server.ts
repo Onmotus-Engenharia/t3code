@@ -1,6 +1,8 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
+  type ProviderInstanceId,
+  type ProviderRateLimits,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -10,6 +12,7 @@ import {
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { selectLatestCodexRateLimits } from "@t3tools/shared/providerRateLimits";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -62,6 +65,22 @@ export const primaryServerStateAtom = Atom.make((get): PrimaryServerState => {
 export const primaryServerConfigAtom = Atom.make(
   (get): ServerConfig | null => get(primaryServerStateAtom).config,
 ).pipe(Atom.withLabel("web-primary-server-config"));
+
+export const primaryCodexRateLimitsAtom = Atom.make((get): ProviderRateLimits | null => {
+  const environmentId = get(primaryEnvironmentIdAtom);
+  if (environmentId === null) return null;
+
+  const configuredInstanceIds = new Set<ProviderInstanceId>(
+    (get(primaryServerConfigAtom)?.providers ?? [])
+      .filter((provider) => provider.driver === "codex" && provider.enabled)
+      .map((provider) => provider.instanceId),
+  );
+  const result = get(serverEnvironment.providerRateLimits({ environmentId, input: {} }));
+  return selectLatestCodexRateLimits(
+    Option.getOrElse(AsyncResult.value(result), () => []),
+    configuredInstanceIds,
+  );
+}).pipe(Atom.withLabel("web-primary-codex-rate-limits"));
 
 export const primaryServerConfigEventAtom = Atom.make(
   (get): ServerConfigStreamEvent | null => get(primaryServerStateAtom).latestEvent,

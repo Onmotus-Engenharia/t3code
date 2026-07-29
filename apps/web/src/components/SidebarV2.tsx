@@ -92,7 +92,11 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
-import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
+import {
+  environmentServerConfigsAtom,
+  primaryCodexRateLimitsAtom,
+  primaryServerKeybindingsAtom,
+} from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { projectEnvironment } from "../state/projects";
@@ -1117,6 +1121,7 @@ export default function SidebarV2() {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const codexRateLimits = useAtomValue(primaryCodexRateLimitsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
@@ -3014,7 +3019,7 @@ export default function SidebarV2() {
           </DialogFooter>
         </DialogPopup>
       </Dialog>
-      <SidebarChromeFooter />
+      <SidebarChromeFooter codexRateLimits={codexRateLimits} />
     </>
   );
 }

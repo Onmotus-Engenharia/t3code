@@ -193,7 +193,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryCodexRateLimitsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -3060,6 +3060,7 @@ export default function Sidebar() {
       : false,
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const codexRateLimits = useAtomValue(primaryCodexRateLimitsAtom);
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
     [],
@@ -3675,7 +3676,7 @@ export default function Sidebar() {
           />
 
           <SidebarSeparator />
-          <SidebarChromeFooter />
+          <SidebarChromeFooter codexRateLimits={codexRateLimits} />
         </>
       )}
     </>

@@ -31,6 +31,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
+  type ProviderRateLimitsSnapshot,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
@@ -79,6 +80,7 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import { ProviderRateLimitsState } from "./provider/Services/ProviderRateLimitsState.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -363,6 +365,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribePreviewEvents, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeDiscoveredLocalServers, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeProviderRateLimits, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerLifecycle, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeAuthAccess, AuthAccessReadScope],
 ]);
@@ -1061,6 +1064,7 @@ const makeWsRpcLayer = (
           threadResumeCompletionMarker: true,
         };
       });
+      const providerRateLimits = yield* Effect.serviceOption(ProviderRateLimitsState);
 
       const refreshGitStatus = (cwd: string) =>
         vcsStatusBroadcaster
@@ -1400,6 +1404,21 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.subscribeProviderRateLimits]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeProviderRateLimits,
+            Option.match(providerRateLimits, {
+              onNone: () => Stream.fromIterable([[] as ReadonlyArray<ProviderRateLimitsSnapshot>]),
+              onSome: (state) => state.changes,
+            }).pipe(
+              Stream.map((entries) => ({
+                version: 1 as const,
+                type: "snapshot" as const,
+                entries,
+              })),
+            ),
+            { transport: "ws" },
+          ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",

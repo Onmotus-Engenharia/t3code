@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ExecutionEnvironmentDescriptor, ServerSelfUpdateMethod } from "./environment.ts";
+import { ProviderRateLimits } from "./providerRuntime.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
   IsoDateTime,
@@ -513,6 +514,21 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSettingsUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
+
+export const ProviderRateLimitsSnapshot = Schema.Struct({
+  provider: ProviderDriverKind,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  updatedAt: IsoDateTime,
+  rateLimits: ProviderRateLimits,
+});
+export type ProviderRateLimitsSnapshot = typeof ProviderRateLimitsSnapshot.Type;
+
+export const ProviderRateLimitsStreamEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("snapshot"),
+  entries: Schema.Array(ProviderRateLimitsSnapshot),
+});
+export type ProviderRateLimitsStreamEvent = typeof ProviderRateLimitsStreamEvent.Type;
 
 export const ServerLifecycleReadyPayload = Schema.Struct({
   at: IsoDateTime,

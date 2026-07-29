@@ -2904,13 +2904,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
-      yield* offerRuntimeEvent({
-        ...base,
-        type: "account.rate-limits.updated",
-        payload: {
-          rateLimits: message,
-        },
-      });
+      // Claude's SDK event has a provider-specific shape. Keep the normalized
+      // account rate-limit event Codex-only until Claude has an explicit mapper.
       return;
     }
   });

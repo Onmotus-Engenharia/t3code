@@ -1254,6 +1254,20 @@ export const makeCodexSessionRuntime = (
       yield* client.request("initialize", buildCodexInitializeParams());
       yield* client.notify("initialized", undefined);
 
+      yield* client.request("account/rateLimits/read", undefined).pipe(
+        Effect.flatMap((response) =>
+          emitEvent({
+            kind: "notification",
+            threadId: options.threadId,
+            method: "account/rateLimits/updated",
+            payload: { rateLimits: response.rateLimits },
+          }),
+        ),
+        Effect.catch((cause) =>
+          Effect.logDebug("Codex account rate limits unavailable during session start.", { cause }),
+        ),
+      );
+
       const requestedModel = normalizeCodexModelSlug(options.model);
 
       const opened = yield* openCodexThread({

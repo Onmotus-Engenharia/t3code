@@ -15,6 +15,8 @@ import {
   type ProviderEvent,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
+  type ProviderRateLimitWindow,
+  type ProviderRateLimits,
   type ProviderRequestKind,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
@@ -38,6 +40,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { mergeProviderRateLimits } from "@t3tools/shared/providerRateLimits";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
@@ -189,6 +192,33 @@ function normalizeCodexTokenUsage(
       ? { lastReasoningOutputTokens: reasoningOutputTokens }
       : {}),
     compactsAutomatically: true,
+  };
+}
+
+function normalizeCodexRateLimitWindow(
+  window:
+    | EffectCodexSchema.V2AccountRateLimitsUpdatedNotification__RateLimitWindow
+    | null
+    | undefined,
+): ProviderRateLimitWindow | undefined {
+  if (!window) return undefined;
+  return {
+    usedPercent: Math.max(0, Math.min(100, window.usedPercent)),
+    ...(window.resetsAt != null ? { resetsAt: window.resetsAt } : {}),
+    ...(window.windowDurationMins != null
+      ? { windowDurationMins: Math.max(0, window.windowDurationMins) }
+      : {}),
+  };
+}
+
+export function normalizeCodexRateLimits(
+  rateLimits: EffectCodexSchema.V2AccountRateLimitsUpdatedNotification["rateLimits"],
+): ProviderRateLimits {
+  const primary = normalizeCodexRateLimitWindow(rateLimits.primary);
+  const secondary = normalizeCodexRateLimitWindow(rateLimits.secondary);
+  return {
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
   };
 }
 
@@ -1127,7 +1157,11 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const payload = readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+      event.payload,
+    );
+    if (!payload) {
       return [];
     }
     return [
@@ -1135,7 +1169,7 @@ function mapToRuntimeEvents(
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          rateLimits: event.payload ?? {},
+          rateLimits: normalizeCodexRateLimits(payload.rateLimits),
         },
       },
     ];
@@ -1375,6 +1409,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  let latestRateLimits: ProviderRateLimits | undefined;
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1459,7 +1494,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
+              if (runtimeEvent.type !== "account.rate-limits.updated") return runtimeEvent;
+              latestRateLimits = mergeProviderRateLimits(
+                latestRateLimits,
+                runtimeEvent.payload.rateLimits,
+              );
+              return {
+                ...runtimeEvent,
+                payload: { rateLimits: latestRateLimits },
+              };
+            });
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

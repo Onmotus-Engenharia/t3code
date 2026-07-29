@@ -1,6 +1,7 @@
 import { SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import type { ProviderRateLimits } from "@t3tools/contracts";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -22,6 +23,7 @@ import {
 } from "../ui/sidebar";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { CodexRateLimitIndicator } from "./CodexRateLimitIndicator";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -118,7 +120,11 @@ function T3Wordmark() {
   );
 }
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter({
+  codexRateLimits = null,
+}: {
+  codexRateLimits?: ProviderRateLimits | null;
+}) {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const handleSettingsClick = useCallback(() => {
@@ -132,6 +138,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-2">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
+      <CodexRateLimitIndicator rateLimits={codexRateLimits} />
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton onClick={handleSettingsClick}>

@@ -3,6 +3,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ProviderRateLimitsStreamEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -286,6 +287,12 @@ export function createServerEnvironmentAtoms<R, E>(
     configValueAtom,
     settingsValueAtom,
     providersValueAtom,
+    providerRateLimits: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:provider-rate-limits",
+      tag: WS_METHODS.subscribeProviderRateLimits,
+      transform: (stream) =>
+        stream.pipe(Stream.map((event: ProviderRateLimitsStreamEvent) => event.entries)),
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
