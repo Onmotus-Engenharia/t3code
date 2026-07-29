@@ -1,7 +1,5 @@
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
-export type ChangeRequestStateLike = "open" | "closed" | "merged";
-
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 export function threadLastActivityAt(shell: OrchestrationThreadShell): string | null {
@@ -85,7 +83,7 @@ export function canSettle(
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (shell.session?.status === "starting" || shell.session?.status === "running") return false;
   // Queued work is as blocked-on-progress as a live session: settling it
-  // (or auto-settling it on a closed PR) would hide a just-requested turn.
+  // would hide a just-requested turn.
   if (hasQueuedTurnStart(shell, options)) return false;
   return true;
 }
@@ -220,17 +218,16 @@ export function threadWokeAt(
  * queued turn) are checked first and hold a thread active regardless of any
  * override. Past the blockers, the explicit user override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
- * wins in both directions; without one, a thread auto-settles on a
- * merged/closed PR immediately or on inactivity past the window. The server
- * un-settles on real activity (user message, session start, approval/
- * user-input request), so an override never goes stale silently.
+ * wins in both directions; without one, a thread auto-settles only on
+ * inactivity past the configured window. The server un-settles on real
+ * activity (user message, session start, approval/user-input request), so an
+ * override never goes stale silently.
  */
 export function effectiveSettled(
   shell: OrchestrationThreadShell,
   options: {
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
-    readonly changeRequestState?: ChangeRequestStateLike | null;
   },
 ): boolean {
   // Blocked work must remain visible even when a user explicitly settled it.
@@ -256,9 +253,6 @@ export function effectiveSettled(
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
-  if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
-    return true;
-  }
   if (options.autoSettleAfterDays === null) return false;
 
   const lastActivityAt = threadLastActivityAt(shell);

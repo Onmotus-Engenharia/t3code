@@ -12,7 +12,6 @@ import {
   effectiveSettled,
   hasQueuedTurnStart,
   threadLastActivityAt,
-  type ChangeRequestStateLike,
 } from "./threadSettled.ts";
 
 const NOW = "2026-04-10T00:00:00.000Z";
@@ -96,7 +95,6 @@ describe("threadLastActivityAt", () => {
 
 describe("effectiveSettled", () => {
   const overrideCases = [null, "settled", "active"] as const;
-  const changeRequestStates = [undefined, "open", "merged"] as const;
   const inactivityCases = [
     ["fresh", FRESH],
     ["stale", STALE],
@@ -105,93 +103,45 @@ describe("effectiveSettled", () => {
   const runningCases = [false, true] as const;
   const pendingCases = [undefined, "approval", "user-input"] as const;
   const truthTable = overrideCases.flatMap((settledOverride) =>
-    changeRequestStates.flatMap((changeRequestState) =>
-      inactivityCases.flatMap(([inactivity, activityAt]) =>
-        runningCases.flatMap((running) =>
-          pendingCases.map((pending) => ({
-            settledOverride,
-            changeRequestState,
-            inactivity,
-            activityAt,
-            running,
-            pending,
-            // Settled iff nothing blocks (pending work / live session) AND
-            // the override says settled, or (with no override) a merged PR
-            // or staleness auto-settles. The "active" pin suppresses both
-            // auto signals.
-            expected:
-              pending === undefined &&
-              !running &&
-              (settledOverride === "settled" ||
-                (settledOverride === null &&
-                  (changeRequestState === "merged" || inactivity === "stale"))),
-          })),
-        ),
+    inactivityCases.flatMap(([inactivity, activityAt]) =>
+      runningCases.flatMap((running) =>
+        pendingCases.map((pending) => ({
+          settledOverride,
+          inactivity,
+          activityAt,
+          running,
+          pending,
+          // Settled iff nothing blocks (pending work / live session) AND
+          // the override says settled, or (with no override) inactivity
+          // passes the configured window. The "active" pin suppresses the
+          // automatic inactivity signal.
+          expected:
+            pending === undefined &&
+            !running &&
+            (settledOverride === "settled" || (settledOverride === null && inactivity === "stale")),
+        })),
       ),
     ),
   );
 
   it.each(truthTable)(
-    "override=$settledOverride pr=$changeRequestState inactivity=$inactivity running=$running pending=$pending",
-    ({ settledOverride, changeRequestState, activityAt, running, pending, expected }) => {
+    "override=$settledOverride inactivity=$inactivity running=$running pending=$pending",
+    ({ settledOverride, activityAt, running, pending, expected }) => {
       const shell = makeShell({
         settledOverride,
         activityAt,
         ...(running ? { sessionStatus: "running" as const } : {}),
         ...(pending === undefined ? {} : { pending }),
       });
-      const changeRequestOptions =
-        changeRequestState === undefined
-          ? {}
-          : { changeRequestState: changeRequestState as ChangeRequestStateLike };
 
       expect(
         effectiveSettled(shell, {
           now: NOW,
           autoSettleAfterDays: 3,
-          ...changeRequestOptions,
         }),
       ).toBe(expected);
     },
   );
-
-  it("treats closed change requests like merged ones", () => {
-    const shell = makeShell({ activityAt: null });
-    expect(
-      effectiveSettled(shell, {
-        now: NOW,
-        autoSettleAfterDays: null,
-        changeRequestState: "closed",
-      }),
-    ).toBe(true);
-  });
-
-  it("settles immediately when a change request merges or closes", () => {
-    const recentlyActive = makeShell({ activityAt: "2026-04-09T23:59:59.999Z" });
-    for (const changeRequestState of ["merged", "closed"] as const) {
-      expect(
-        effectiveSettled(recentlyActive, {
-          now: NOW,
-          autoSettleAfterDays: null,
-          changeRequestState,
-        }),
-      ).toBe(true);
-    }
-  });
-
-  it("keeps an explicitly un-settled merged-PR thread active", () => {
-    const shell = makeShell({
-      settledOverride: "active",
-      activityAt: "2026-04-09T23:59:59.999Z",
-    });
-    expect(
-      effectiveSettled(shell, {
-        now: NOW,
-        autoSettleAfterDays: null,
-        changeRequestState: "merged",
-      }),
-    ).toBe(false);
-  });
 
   it("never settles a starting session, even with a settled override", () => {
     const shell = makeShell({
@@ -203,7 +153,6 @@ describe("effectiveSettled", () => {
       effectiveSettled(shell, {
         now: NOW,
         autoSettleAfterDays: 3,
-        changeRequestState: "merged",
       }),
     ).toBe(false);
   });
@@ -247,7 +196,6 @@ describe("effectiveSettled", () => {
         effectiveSettled(shell, {
           now: transitionNow,
           autoSettleAfterDays: 3,
-          changeRequestState: "merged",
         }),
       ).toBe(false);
     }
@@ -359,13 +307,11 @@ describe("canSettle", () => {
     };
     const justAfter = "2026-04-09T12:00:30.000Z";
     expect(canSettle(queued, { now: justAfter })).toBe(false);
-    // effectiveSettled must agree: queued work never auto-settles either,
-    // even with a merged PR.
+    // effectiveSettled must agree: queued work never auto-settles either.
     expect(
       effectiveSettled(queued, {
         now: justAfter,
         autoSettleAfterDays: 3,
-        changeRequestState: "merged",
       }),
     ).toBe(false);
     // Past the window the message is a failed/stale start: settleable again.
