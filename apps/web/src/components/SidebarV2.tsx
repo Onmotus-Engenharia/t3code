@@ -168,11 +168,24 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const TASK_SETTLE_PROJECTION_TIMEOUT_MS = 5_000;
+const TASK_SETTLE_PROJECTION_POLL_MS = 25;
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+
+async function waitForTaskSettleProjection(isSettled: () => boolean): Promise<boolean> {
+  const deadline = Date.now() + TASK_SETTLE_PROJECTION_TIMEOUT_MS;
+  while (!isSettled()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, TASK_SETTLE_PROJECTION_POLL_MS);
+    });
+  }
+  return true;
+}
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -1859,7 +1872,7 @@ export default function SidebarV2() {
         try {
           const coSettlingKeys = new Set([...(opts.coSettlingKeys ?? []), ...targetKeys]);
           const navigateAfterSettle = planForwardNavigation(threadKey, coSettlingKeys);
-          for (const row of actionableRows) {
+          for (const [index, row] of actionableRows.entries()) {
             const targetRef = scopeThreadRef(row.thread.environmentId, row.thread.id);
             if (snoozedThreadKeysRef.current.has(row.threadKey)) {
               const wakeResult = await unsnoozeThread(targetRef);
@@ -1897,6 +1910,24 @@ export default function SidebarV2() {
                   }),
                 );
               }
+              return;
+            }
+            // Command receipts can arrive before their projected shell
+            // updates. A parent settle issued in that gap still sees an
+            // active child and is rejected, so wait before moving upward.
+            if (
+              index < actionableRows.length - 1 &&
+              !(await waitForTaskSettleProjection(() =>
+                settledThreadKeysRef.current.has(row.threadKey),
+              ))
+            ) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to settle task tree",
+                  description: "Task settlement did not finish syncing. Try again.",
+                }),
+              );
               return;
             }
           }
