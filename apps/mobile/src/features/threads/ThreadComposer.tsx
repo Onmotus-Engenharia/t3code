@@ -69,6 +69,11 @@ import {
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import {
+  formatContextUsage,
+  formatContextWindowTokens,
+  type TaskTreeContextWindowUsage,
+} from "./contextWindow";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -98,6 +103,7 @@ export interface ThreadComposerProps {
    */
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: OrchestrationThreadShell;
+  readonly taskTreeContextWindowUsage: TaskTreeContextWindowUsage | null;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -674,6 +680,25 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ],
     [currentInteractionMode, currentRuntimeMode, providerOptionDescriptors],
   );
+  const currentContextUsage = props.selectedThread.latestTokenUsage;
+  const contextUsageActions = useMemo(() => {
+    if (!currentContextUsage) return [];
+    const actions = [
+      {
+        id: "context-current",
+        title: "Current thread",
+        subtitle: `${formatContextUsage(currentContextUsage)} · ${formatContextWindowTokens(currentContextUsage.totalProcessedTokens ?? currentContextUsage.usedTokens)} processed`,
+      },
+    ];
+    if (props.taskTreeContextWindowUsage) {
+      actions.push({
+        id: "context-all-tasks",
+        title: `All tasks (${props.taskTreeContextWindowUsage.taskCount})`,
+        subtitle: `${formatContextUsage(props.taskTreeContextWindowUsage)} · ${formatContextWindowTokens(props.taskTreeContextWindowUsage.totalProcessedTokens)} processed`,
+      });
+    }
+    return actions;
+  }, [currentContextUsage, props.taskTreeContextWindowUsage]);
 
   // ── Menu handlers ────────────────────────────────────────
   function handleModelMenuAction(event: string) {
@@ -877,6 +902,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     label={currentModelOption?.label ?? currentModelSelection.model}
                   />
                 </ControlPillMenu>
+                {currentContextUsage ? (
+                  <ControlPillMenu actions={contextUsageActions} onPressAction={() => undefined}>
+                    <ComposerToolbarTrigger
+                      accessibilityLabel={`Context window: ${formatContextUsage(currentContextUsage)}. ${formatContextWindowTokens(currentContextUsage.totalProcessedTokens ?? currentContextUsage.usedTokens)} total processed${props.taskTreeContextWindowUsage ? `. All ${props.taskTreeContextWindowUsage.taskCount} tasks: ${formatContextUsage(props.taskTreeContextWindowUsage)}, ${formatContextWindowTokens(props.taskTreeContextWindowUsage.totalProcessedTokens)} total processed` : ""}`}
+                      icon="gauge.with.dots.needle.33percent"
+                      label={formatContextUsage(currentContextUsage)}
+                    />
+                  </ControlPillMenu>
+                ) : null}
                 <ControlPillMenu
                   actions={optionsMenuActions}
                   onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}

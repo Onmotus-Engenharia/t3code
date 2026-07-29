@@ -41,9 +41,11 @@ import {
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import type { TaskTreeContextWindowUsage } from "./contextWindow";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
+  readonly taskTreeContextWindowUsage: TaskTreeContextWindowUsage | null;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
@@ -427,6 +429,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               environmentLabel={props.environmentLabel}
               threadSyncPhase={threadSyncPhase}
               selectedThread={props.selectedThread}
+              taskTreeContextWindowUsage={props.taskTreeContextWindowUsage}
               serverConfig={props.serverConfig}
               queueCount={props.selectedThreadQueueCount}
               activeThreadBusy={props.activeThreadBusy}

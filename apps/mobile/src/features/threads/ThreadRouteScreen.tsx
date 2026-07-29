@@ -5,11 +5,15 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -59,7 +63,9 @@ import { useSelectedThreadRequests } from "../../state/use-selected-thread-reque
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadEnvironment } from "../../state/threads";
+import { useThreadShells } from "../../state/entities";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
+import { deriveTaskTreeContextWindowUsage } from "./contextWindow";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
@@ -71,6 +77,7 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
+import { deriveThreadOrchestrationControlModel } from "./thread-orchestration-controls";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -188,6 +195,7 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const threadShells = useThreadShells();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
@@ -196,6 +204,9 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const setThreadTaskOrchestration = useAtomCommand(threadEnvironment.setTaskOrchestration, {
+    reportFailure: false,
+  });
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -277,6 +288,25 @@ function ThreadRouteContent(
         : null,
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
   );
+  const taskTreeContextWindowUsage = useMemo(
+    () =>
+      deriveTaskTreeContextWindowUsage(
+        selectedThread,
+        selectedThread === null
+          ? []
+          : threadShells.filter((thread) => thread.environmentId === selectedThread.environmentId),
+      ),
+    [selectedThread, threadShells],
+  );
+  const [taskOrchestrationPendingKey, setTaskOrchestrationPendingKey] = useState<string | null>(
+    null,
+  );
+  const selectedThreadKey =
+    selectedThread === null
+      ? null
+      : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
+  const taskOrchestrationPending =
+    selectedThreadKey !== null && taskOrchestrationPendingKey === selectedThreadKey;
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
@@ -286,6 +316,79 @@ function ThreadRouteContent(
   ]
     .filter(Boolean)
     .join(" · ");
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const orchestrationControl = useMemo(
+    () =>
+      selectedThread === null
+        ? null
+        : deriveThreadOrchestrationControlModel({
+            thread: selectedThread,
+            threadShells,
+            serverConfig,
+            pending: taskOrchestrationPending,
+          }),
+    [selectedThread, serverConfig, taskOrchestrationPending, threadShells],
+  );
+  const displayHeaderSubtitle = [
+    headerSubtitle || null,
+    orchestrationControl?.showControl ? orchestrationControl.toggleLabel : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const handleOpenParentThread = useCallback(() => {
+    const target = orchestrationControl?.parentTarget;
+    if (target === null || target === undefined) {
+      if (orchestrationControl?.hasStaleParent) {
+        Alert.alert(
+          "Parent thread unavailable",
+          "Parent thread is no longer available in this project's mobile snapshot.",
+        );
+      }
+      return;
+    }
+    navigation.navigate("Thread", {
+      environmentId: String(target.environmentId),
+      threadId: String(target.threadId),
+    });
+  }, [navigation, orchestrationControl]);
+  const handleToggleTaskOrchestration = useCallback(() => {
+    if (
+      selectedThread === null ||
+      orchestrationControl?.showControl !== true ||
+      taskOrchestrationPending
+    ) {
+      return;
+    }
+    const key = scopedThreadKey(selectedThread.environmentId, selectedThread.id);
+    void (async () => {
+      setTaskOrchestrationPendingKey(key);
+      try {
+        const result = await setThreadTaskOrchestration({
+          environmentId: selectedThread.environmentId,
+          input: {
+            threadId: selectedThread.id,
+            enabled: !selectedThread.taskOrchestrationEnabled,
+          },
+        });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          Alert.alert(
+            "Could not update task orchestration",
+            error instanceof Error
+              ? error.message
+              : "This server may not support task orchestration controls yet. Update it and try again.",
+          );
+        }
+      } finally {
+        setTaskOrchestrationPendingKey((current) => (current === key ? null : current));
+      }
+    })();
+  }, [
+    orchestrationControl?.showControl,
+    selectedThread,
+    setThreadTaskOrchestration,
+    taskOrchestrationPending,
+  ]);
   /* ─── Git status for native header trigger ───────────────────────── */
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -619,6 +722,52 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const orchestrationHeaderItems = useMemo<NativeHeaderItems>(() => {
+    if (selectedThread === null || orchestrationControl === null) return [];
+    const items: NativeHeaderItems[number][] = [];
+    if (selectedThread.taskRelation !== null) {
+      items.push(
+        withNativeGlassHeaderItem({
+          accessibilityLabel: "Open parent orchestrator thread",
+          icon: { name: "arrow.turn.left.up", type: "sfSymbol" as const },
+          identifier: "thread-open-parent",
+          onPress: handleOpenParentThread,
+          type: "button" as const,
+        }),
+      );
+    }
+    if (orchestrationControl.showControl) {
+      items.push(
+        withNativeGlassHeaderItem({
+          accessibilityLabel: orchestrationControl.toggleLabel,
+          disabled: taskOrchestrationPending,
+          icon: {
+            name: "point.3.connected.trianglepath.dotted",
+            type: "sfSymbol" as const,
+          },
+          identifier: "thread-task-orchestration",
+          label: orchestrationControl.toggleLabel,
+          onPress: handleToggleTaskOrchestration,
+          type: "button" as const,
+        }),
+      );
+    }
+    return items;
+  }, [
+    handleOpenParentThread,
+    handleToggleTaskOrchestration,
+    orchestrationControl,
+    selectedThread,
+    taskOrchestrationPending,
+  ]);
+  const compactThreadHeaderItems = useMemo(
+    () => [...orchestrationHeaderItems, ...compactRightHeaderItems],
+    [compactRightHeaderItems, orchestrationHeaderItems],
+  );
+  const splitThreadHeaderItems = useMemo(
+    () => [...orchestrationHeaderItems, ...threadCenterHeaderItems],
+    [orchestrationHeaderItems, threadCenterHeaderItems],
+  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -671,6 +820,21 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
+    if (selectedThread !== null && selectedThread.taskRelation !== null) {
+      actions.push({
+        accessibilityLabel: "Open parent orchestrator thread",
+        icon: "arrow.turn.left.up",
+        onPress: handleOpenParentThread,
+      });
+    }
+    if (orchestrationControl?.showControl) {
+      actions.push({
+        accessibilityLabel: orchestrationControl.toggleLabel,
+        disabled: taskOrchestrationPending,
+        icon: "point.3.connected.trianglepath.dotted",
+        onPress: handleToggleTaskOrchestration,
+      });
+    }
     if (selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Open files",
@@ -701,12 +865,17 @@ function ThreadRouteContent(
   }, [
     fileInspector.supported,
     handleOpenFilesInspector,
+    handleOpenParentThread,
     handleOpenTerminal,
     handleOpenGitInspector,
+    handleToggleTaskOrchestration,
     handleToggleInspector,
+    orchestrationControl,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
+    selectedThread?.taskRelation,
+    taskOrchestrationPending,
   ]);
 
   // Deep links / cold starts land with Thread as the ONLY route, where the
@@ -740,7 +909,6 @@ function ThreadRouteContent(
     detailDeleted: selectedThreadDetailState.status === "deleted",
     connectionState: routeConnectionState,
   });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
@@ -750,6 +918,7 @@ function ThreadRouteContent(
       <View className="flex-1 bg-screen">
         <ThreadDetailScreen
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
+          taskTreeContextWindowUsage={taskTreeContextWindowUsage}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}
           connectionError={routeConnectionError}
@@ -827,16 +996,16 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () => (layout.usesSplitView ? splitThreadHeaderItems : compactThreadHeaderItems)
               : undefined,
-          unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
+          unstable_headerSubtitle: usesNativeHeaderGlass ? displayHeaderSubtitle : undefined,
         }}
       />
 
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
           title={selectedThread.title}
-          subtitle={headerSubtitle}
+          subtitle={displayHeaderSubtitle}
           onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
           actions={androidHeaderActions}
         />

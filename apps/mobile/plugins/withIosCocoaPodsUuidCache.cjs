@@ -23,6 +23,16 @@ const UUID_REPAIR = `${MARKER}
     pods_project.instance_variable_set(:@available_uuids, [])
     pods_project.generate_available_uuid_list(1_000)
     Pod::UI.puts "T3Code: reset CocoaPods UUID allocator at #{next_index} (#{existing_uuids.length} existing objects)"
+
+    # Xcode 27 rejects deployment targets below iOS 15, including resource-bundle
+    # targets whose podspecs still declare iOS 12. Keep every generated Pod target
+    # aligned with the app deployment target.
+    deployment_target = podfile_properties['ios.deploymentTarget']
+    pods_project.targets.each do |target|
+      target.build_configurations.each do |build_configuration|
+        build_configuration.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = deployment_target
+      end
+    end
 `;
 
 module.exports = function withIosCocoaPodsUuidCache(config) {

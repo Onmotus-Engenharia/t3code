@@ -136,6 +136,17 @@ normal running/completed/failed/interrupted state presentation and add restraine
 indicators. Pinned rows sort first within their current lifecycle section. Opening a task uses the
 normal thread route; its header can navigate back to the parent.
 
+Web/desktop and mobile group task relations into a visual tree under the root thread's lifecycle
+section. Descendants use compact rows while keeping their own settle, un-settle, or wake action.
+Users can show a child as a visual root and later re-nest it; this preference is client-local and
+does not change orchestration ownership. Settling a visual root processes descendants deepest-first,
+wakes snoozed descendants before settling them, and settles the root last.
+
+Supported Codex thread headers expose the persisted orchestration state and allow both enabling and
+disabling it. Root thread context usage also includes an aggregate over measured descendants;
+missing capacity on any measured task suppresses the aggregate percentage instead of presenting a
+partial limit as complete.
+
 ## Testing
 
 Focused tests cover contracts, decider invariants, event projection, database reload, client replay,
