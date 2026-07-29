@@ -218,7 +218,9 @@ import {
   useThreadProposedPlans,
   useThreadRefs,
   useThreadShell,
+  useThreadShells,
 } from "../state/entities";
+import { deriveTaskTreeContextWindowUsage } from "../lib/contextWindow";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
@@ -1348,6 +1350,7 @@ function ChatViewContent(props: ChatViewProps) {
   const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const serverThreadRefs = useThreadRefs();
+  const threadShells = useThreadShells();
   const serverThreadKeys = useMemo(() => serverThreadRefs.map(scopedThreadKey), [serverThreadRefs]);
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftThreadKeys = useMemo(
@@ -3873,6 +3876,13 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const taskTreeContextWindowUsage = useMemo(() => {
+    if (activeThreadShell === null) return null;
+    return deriveTaskTreeContextWindowUsage(
+      activeThreadShell,
+      threadShells.filter((thread) => thread.environmentId === activeThreadShell.environmentId),
+    );
+  }, [activeThreadShell, threadShells]);
   const [taskOrchestrationPendingKey, setTaskOrchestrationPendingKey] = useState<string | null>(
     null,
   );
@@ -5909,6 +5919,7 @@ function ChatViewContent(props: ChatViewProps) {
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeThreadActivities={activeThread?.activities}
+                            taskTreeContextWindowUsage={taskTreeContextWindowUsage}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}

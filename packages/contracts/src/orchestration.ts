@@ -21,6 +21,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 import {
   TaskRelation,
   ThreadPinSetCommand,
@@ -432,6 +433,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   taskOrchestrationEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   taskRelation: Schema.NullOr(TaskRelation).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   pinned: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  latestTokenUsage: Schema.optional(Schema.NullOr(ThreadTokenUsageSnapshot)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,

@@ -202,6 +202,7 @@ import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import {
   deriveLatestContextWindowSnapshot,
   formatProviderDisplayName,
+  type TaskTreeContextWindowUsage,
 } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
@@ -409,6 +410,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
+  taskTreeContextWindowUsage: TaskTreeContextWindowUsage | null;
   activeThreadProviderDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
@@ -435,6 +437,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       {props.activeContextWindow ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
+          taskTreeUsage={props.taskTreeContextWindowUsage}
           providerDisplayName={props.activeThreadProviderDisplayName}
         />
       ) : null}
@@ -571,6 +574,7 @@ export interface ChatComposerProps {
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
+  taskTreeContextWindowUsage: TaskTreeContextWindowUsage | null;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -663,6 +667,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     activeThreadActivities,
+    taskTreeContextWindowUsage,
     resolvedTheme,
     settings,
     keybindings,
@@ -3157,6 +3162,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}
+                  taskTreeContextWindowUsage={taskTreeContextWindowUsage}
                   activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}

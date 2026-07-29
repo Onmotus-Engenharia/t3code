@@ -522,6 +522,42 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
     assert.strictEqual(thread.settledAt, null);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(shell.latestTokenUsage, undefined);
+  }),
+);
+
+it.effect("decodes latest token usage on thread shells", () =>
+  Effect.gen(function* () {
+    const shell = yield* decodeOrchestrationThreadShell({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Usage thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      session: null,
+      latestTokenUsage: {
+        usedTokens: 120_000,
+        totalProcessedTokens: 8_100_000,
+        maxTokens: 258_400,
+      },
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    });
+
+    assert.deepStrictEqual(shell.latestTokenUsage, {
+      usedTokens: 120_000,
+      totalProcessedTokens: 8_100_000,
+      maxTokens: 258_400,
+    });
   }),
 );
 

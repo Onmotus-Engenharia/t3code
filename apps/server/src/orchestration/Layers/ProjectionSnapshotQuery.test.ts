@@ -172,9 +172,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'thread-1',
           'turn-1',
           'info',
-          'runtime.note',
-          'provider started',
-          '{"stage":"start"}',
+          'context-window.updated',
+          'Context window updated',
+          '{"usedTokens":120000,"totalProcessedTokens":8100000,"maxTokens":258400,"compactsAutomatically":true}',
           '2026-02-24T00:00:06.000Z'
         )
       `;
@@ -352,9 +352,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             {
               id: asEventId("activity-1"),
               tone: "info",
-              kind: "runtime.note",
-              summary: "provider started",
-              payload: { stage: "start" },
+              kind: "context-window.updated",
+              summary: "Context window updated",
+              payload: {
+                usedTokens: 120_000,
+                totalProcessedTokens: 8_100_000,
+                maxTokens: 258_400,
+                compactsAutomatically: true,
+              },
               turnId: asTurnId("turn-1"),
               createdAt: "2026-02-24T00:00:06.000Z",
             },
@@ -448,6 +453,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             createdBy: "agent",
           },
           pinned: false,
+          latestTokenUsage: {
+            usedTokens: 120_000,
+            totalProcessedTokens: 8_100_000,
+            maxTokens: 258_400,
+            compactsAutomatically: true,
+          },
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -468,6 +479,17 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(threadDetail._tag, "Some");
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
+      }
+
+      const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
+      assert.equal(threadShell._tag, "Some");
+      if (threadShell._tag === "Some") {
+        assert.deepEqual(threadShell.value.latestTokenUsage, {
+          usedTokens: 120_000,
+          totalProcessedTokens: 8_100_000,
+          maxTokens: 258_400,
+          compactsAutomatically: true,
+        });
       }
     }),
   );

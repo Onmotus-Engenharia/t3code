@@ -1,5 +1,9 @@
 import { cn } from "~/lib/utils";
-import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
+import {
+  type ContextWindowSnapshot,
+  formatContextWindowTokens,
+  type TaskTreeContextWindowUsage,
+} from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
 function formatPercentage(value: number | null): string | null {
@@ -14,16 +18,22 @@ function formatPercentage(value: number | null): string | null {
 
 export function ContextWindowMeter(props: {
   usage: ContextWindowSnapshot;
+  taskTreeUsage?: TaskTreeContextWindowUsage | null;
   providerDisplayName?: string | null;
 }) {
-  const { usage, providerDisplayName } = props;
+  const { usage, taskTreeUsage, providerDisplayName } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference - (normalizedPercentage / 100) * circumference;
-  const totalProcessedTokens = usage.totalProcessedTokens ?? null;
-  const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
+  const totalProcessedTokens = usage.totalProcessedTokens ?? usage.usedTokens;
+  const showTotalProcessed = totalProcessedTokens > 0;
+  const taskTreeUsedPercentage = formatPercentage(taskTreeUsage?.usedPercentage ?? null);
+  const normalizedTaskTreePercentage = Math.max(
+    0,
+    Math.min(100, taskTreeUsage?.usedPercentage ?? 0),
+  );
   const isOverloaded = normalizedPercentage > 90;
   const usageColor = isOverloaded
     ? "var(--color-red-500)"
@@ -125,6 +135,53 @@ export function ContextWindowMeter(props: {
               <span className="font-medium tabular-nums text-muted-foreground/80">
                 {formatContextWindowTokens(totalProcessedTokens)}
               </span>
+            </div>
+          ) : null}
+          {taskTreeUsage ? (
+            <div className="mt-1 flex flex-col gap-2 border-border/50 border-t pt-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="font-medium text-muted-foreground text-xs">
+                  All tasks
+                  <span className="ml-1 text-[10px] text-muted-foreground/50">
+                    {taskTreeUsage.taskCount}
+                  </span>
+                </div>
+                {taskTreeUsage.maxTokens !== null && taskTreeUsedPercentage ? (
+                  <div className="text-[11px] tabular-nums text-muted-foreground/70">
+                    <span>{taskTreeUsedPercentage}</span>
+                    <span className="mx-1">·</span>
+                    <span>
+                      {formatContextWindowTokens(taskTreeUsage.usedTokens)}/
+                      {formatContextWindowTokens(taskTreeUsage.maxTokens)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-[11px] tabular-nums text-muted-foreground/70">
+                    {formatContextWindowTokens(taskTreeUsage.usedTokens)}
+                  </div>
+                )}
+              </div>
+              {taskTreeUsage.maxTokens !== null ? (
+                <div
+                  className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(normalizedTaskTreePercentage)}
+                  aria-label="All tasks context window usage"
+                >
+                  <div
+                    className="h-full rounded-full bg-muted-foreground/70 transition-[width] duration-500 ease-out motion-reduce:transition-none"
+                    style={{ width: `${normalizedTaskTreePercentage}%` }}
+                  />
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
+                <span className="text-muted-foreground/60">Total processed</span>
+                <span className="font-medium tabular-nums text-muted-foreground/80">
+                  {formatContextWindowTokens(taskTreeUsage.totalProcessedTokens)}
+                </span>
+              </div>
             </div>
           ) : null}
           {usage.compactsAutomatically ? (
