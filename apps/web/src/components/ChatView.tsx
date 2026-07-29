@@ -5738,7 +5738,7 @@ function ChatViewContent(props: ChatViewProps) {
             taskOrchestrationEnabled={activeThreadShell?.taskOrchestrationEnabled ?? true}
             taskOrchestrationPending={taskOrchestrationPending}
             taskRelation={activeThreadShell?.taskRelation ?? null}
-            showTaskOrchestrationControl
+            showTaskOrchestrationControl={isServerThread}
             onSetTaskOrchestrationEnabled={handleSetTaskOrchestrationEnabled}
             onOpenParentThread={handleOpenParentThread}
             onNewThreadInProject={handleNewThreadInActiveProject}
