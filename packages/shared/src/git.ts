@@ -55,6 +55,22 @@ export function sanitizeFeatureBranchName(raw: string): string {
 
 const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
 
+export interface UnifiedDiffLineStat {
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+export function countUnifiedDiffLines(diff: string): UnifiedDiffLineStat {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+    if (line.startsWith("+")) additions += 1;
+    if (line.startsWith("-")) deletions += 1;
+  }
+  return { additions, deletions };
+}
+
 /**
  * Resolve a unique `feature/…` refName name that doesn't collide with
  * any existing refName. Appends a numeric suffix when needed.

@@ -5,6 +5,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 ## Table of contents
 
 - [Project and workspace](#project-and-workspace)
+- [Client layout](#client-layout)
 - [Thread timeline](#thread-timeline)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
@@ -25,6 +26,20 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 #### Worktree
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live in [GitCore.ts][3].
+
+### Client layout
+
+#### Thread split view
+
+A client-local visual group of 2–12 independent thread or draft panes. A split view may span
+projects and environments, but each target belongs to at most one group and retains its own
+timeline, context, composer, workspace, task relationship, and provider session. Split focus and
+membership do not change orchestration or server state.
+
+Groups, focus, layout, pane order, and manual sizes persist locally on the desktop app or
+desktop-class web client. They do not sync between devices and require no server capability or data
+migration. Narrow web workspaces show only the focused member with a compact switcher, while native
+mobile remains single-pane. See [Split Views][25] and [workspace-layout.md][2].
 
 ### Thread timeline
 
@@ -153,6 +168,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [provider-architecture.md][16]
 - [runtime-modes.md][18]
 - [workspace-layout.md][2]
+- [Split Views][25]
 
 [1]: ../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -178,3 +194,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../apps/server/src/checkpointing/Utils.ts
 [23]: ../apps/server/src/checkpointing/Diffs.ts
 [24]: ./architecture.md
+[25]: ../user/split-views.md

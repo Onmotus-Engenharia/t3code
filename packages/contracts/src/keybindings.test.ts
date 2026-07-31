@@ -7,6 +7,8 @@ import {
   KeybindingRule,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
+  CONFIGURABLE_STATIC_KEYBINDING_COMMANDS,
+  SPLIT_VIEW_KEYBINDING_COMMANDS,
 } from "./keybindings.ts";
 
 const decode = <S extends Schema.Top>(
@@ -82,8 +84,23 @@ it.effect("parses keybinding rules", () =>
       command: "thread.previous",
     });
     assert.strictEqual(parsedThreadPrevious.command, "thread.previous");
+
+    for (const command of SPLIT_VIEW_KEYBINDING_COMMANDS) {
+      const parsedSplitView = yield* decode(KeybindingRule, {
+        key: "mod+alt+x",
+        command,
+        when: "splitViewActive",
+      });
+      assert.strictEqual(parsedSplitView.command, command);
+    }
   }),
 );
+
+it("exports every split-view command as configurable static public contract", () => {
+  for (const command of SPLIT_VIEW_KEYBINDING_COMMANDS) {
+    assert.isTrue(CONFIGURABLE_STATIC_KEYBINDING_COMMANDS.includes(command));
+  }
+});
 
 it.effect("rejects invalid command values", () =>
   Effect.gen(function* () {

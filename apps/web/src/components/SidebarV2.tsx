@@ -1,4 +1,15 @@
 import { autoAnimate } from "@formkit/auto-animate";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { useAtomValue } from "@effect/atom-react";
 import {
   canSnooze,
@@ -25,6 +36,7 @@ import {
   CopyIcon,
   FolderIcon,
   FolderPlusIcon,
+  GripVerticalIcon,
   GitBranchIcon,
   EllipsisIcon,
   MessageSquareIcon,
@@ -44,6 +56,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -103,10 +116,18 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
-  buildThreadRouteParams,
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
+  splitKeyToThreadRouteTarget,
+  threadRouteTargetToSplitKey,
 } from "../threadRoutes";
+import { useThreadNavigation } from "../threadSplitNavigation";
+import {
+  getThreadSplitGroupForTarget,
+  threadSplitStore,
+  type ThreadSplitCatalogThread,
+  type ThreadSplitTargetKey,
+} from "../threadSplitStore";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
@@ -168,6 +189,20 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { resolveSidebarV2SplitSelection } from "./SidebarV2.split.logic";
+import {
+  ThreadSplitIndicator,
+  ThreadSplitShelf,
+  type ThreadSplitShelfGroup,
+} from "./thread-split/ThreadSplitShelf";
+import {
+  applyThreadSplitDrop,
+  isValidThreadSplitDropTarget,
+  resolveThreadSplitDrop,
+  THREAD_SPLIT_DRAG_ACTIVATION_DISTANCE,
+  threadSplitDragData,
+  threadSplitTargetDropData,
+} from "./thread-split/threadSplitDrag";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -460,6 +495,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onToggleTaskTree: (rootThreadKey: string) => void;
+  inSplitView: boolean;
+  validSplitDropTarget: boolean;
 }) {
   const {
     isRenaming,
@@ -485,6 +522,20 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const splitTargetKey = `server:${threadKey}` as ThreadSplitTargetKey;
+  const {
+    attributes: dragAttributes,
+    listeners: dragListeners,
+    setNodeRef: setDragHandleRef,
+  } = useDraggable({
+    id: `sidebar-v2-split-drag:${splitTargetKey}`,
+    data: threadSplitDragData(splitTargetKey, thread.title),
+    disabled: isRenaming,
+  });
+  const { isOver: isSplitDropTarget, setNodeRef: setSplitDropRef } = useDroppable({
+    id: `sidebar-v2-split-drop:${splitTargetKey}`,
+    data: threadSplitTargetDropData(splitTargetKey),
+  });
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
@@ -819,14 +870,32 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         />
       </button>
     ) : null;
+  const splitDragHandle = (
+    <span
+      {...dragAttributes}
+      {...dragListeners}
+      aria-label={`Drag ${thread.title} into a split view`}
+      className="inline-flex size-5 shrink-0 touch-none cursor-grab items-center justify-center rounded-sm text-muted-foreground/45 opacity-0 hover:bg-sidebar-row-hover hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100 active:cursor-grabbing"
+      onClick={(event) => event.stopPropagation()}
+      ref={setDragHandleRef}
+      role="button"
+      tabIndex={0}
+    >
+      <GripVerticalIcon aria-hidden className="size-3.5" />
+    </span>
+  );
 
   if (variant === "slim") {
     const nestingOffset = props.nestingDepth * 14;
     return (
       <li
+        ref={setSplitDropRef}
         data-thread-item
         data-task-tree-depth={props.nestingDepth}
-        className="relative list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
+        className={cn(
+          "relative list-none rounded-md [content-visibility:auto] [contain-intrinsic-size:auto_34px]",
+          isSplitDropTarget && props.validSplitDropTarget && "ring-2 ring-primary/60",
+        )}
         style={nestingOffset === 0 ? undefined : { paddingLeft: nestingOffset }}
       >
         {props.nestingDepth > 0 ? (
@@ -876,6 +945,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             </span>
             {taskTreeToggle}
             <ThreadOrchestrationBadges thread={thread} />
+            {props.inSplitView ? <ThreadSplitIndicator /> : null}
             {title}
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
@@ -940,6 +1010,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               )}
             </span>
             {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
+            {splitDragHandle}
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
@@ -951,8 +1022,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
 
   return (
     <li
+      ref={setSplitDropRef}
       data-thread-item
-      className="list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]"
+      className={cn(
+        "list-none rounded-md py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
+        isSplitDropTarget && props.validSplitDropTarget && "ring-2 ring-primary/60",
+      )}
     >
       <Tooltip>
         <TooltipTrigger
@@ -1059,6 +1134,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
               {taskTreeToggle}
               <ThreadOrchestrationBadges thread={thread} />
+              {props.inSplitView ? <ThreadSplitIndicator /> : null}
               {title}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
@@ -1096,6 +1172,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             </div>
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
+          <span className="absolute bottom-1.5 right-1.5 z-20">{splitDragHandle}</span>
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
@@ -1185,12 +1262,19 @@ export default function SidebarV2() {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
+  const threadNavigation = useThreadNavigation(routeTarget);
+  const splitState = useSyncExternalStore(
+    threadSplitStore.subscribe,
+    threadSplitStore.getState,
+    threadSplitStore.getInitialState,
+  );
+  const focusedRouteTarget = threadNavigation.getFocusedTarget();
   const routeDraftThread = useComposerDraftStore((store) =>
     routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
   );
   const routeThreadRef = useMemo(
-    () => resolveActiveThreadRouteRef(routeTarget, routeDraftThread),
-    [routeDraftThread, routeTarget],
+    () => resolveActiveThreadRouteRef(focusedRouteTarget, routeDraftThread),
+    [focusedRouteTarget, routeDraftThread],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   const routeTargetRef = useRef(routeTarget);
@@ -1680,6 +1764,53 @@ export default function SidebarV2() {
       ),
     [orderedThreads],
   );
+  const splitCatalog = useMemo<readonly ThreadSplitCatalogThread[]>(() => {
+    const rows = [
+      ...taskTreeSections.active.flatMap((group) => group.rows),
+      ...taskTreeSections.snoozed.flatMap((group) => group.rows),
+      ...taskTreeSections.settled.flatMap((group) => group.rows),
+    ];
+    return rows.map((row, treeOrder) => {
+      const rootThreadId = row.thread.taskRelation?.rootThreadId;
+      return {
+        targetKey: `server:${row.threadKey}` as ThreadSplitTargetKey,
+        rootThreadKey: rootThreadId
+          ? scopedThreadKey(scopeThreadRef(row.thread.environmentId, rootThreadId))
+          : null,
+        updatedAt: row.thread.updatedAt,
+        treeOrder,
+      };
+    });
+  }, [taskTreeSections]);
+  const allThreadByKey = useMemo(
+    () =>
+      new Map(
+        threads.map(
+          (thread) =>
+            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+        ),
+      ),
+    [threads],
+  );
+  const splitShelfGroups = useMemo<readonly ThreadSplitShelfGroup[]>(() => {
+    const claimed = new Set(Object.values(splitState.groups).flatMap((group) => group.targetKeys));
+    return splitState.groupOrder.flatMap((groupId) => {
+      const group = splitState.groups[groupId];
+      if (!group) return [];
+      const rootThreadKey = group.taskTreeBinding?.rootThreadKey;
+      const availableDescendantKeys = rootThreadKey
+        ? splitCatalog
+            .filter(
+              (entry) =>
+                entry.rootThreadKey === rootThreadKey &&
+                !group.targetKeys.includes(entry.targetKey) &&
+                !claimed.has(entry.targetKey),
+            )
+            .map((entry) => entry.targetKey)
+        : [];
+      return [{ ...group, availableDescendantKeys }];
+    });
+  }, [splitCatalog, splitState.groupOrder, splitState.groups]);
   // Rows call back into the click handler without carrying the ordered list as
   // a prop — a fresh array identity per shell update would defeat every row's
   // memoization. The ref keeps shift-range-select working against the list as
@@ -1752,12 +1883,47 @@ export default function SidebarV2() {
       if (isMobile) {
         setOpenMobile(false);
       }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      void threadNavigation.openTarget(
+        { kind: "server", threadRef },
+        { history: "push", disposition: "activate-existing-group" },
+      );
     },
-    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+    [clearSelection, isMobile, setOpenMobile, setSelectionAnchor, threadNavigation],
+  );
+
+  const openTaskSplitForThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      const rootThreadId = thread.taskRelation?.rootThreadId ?? thread.id;
+      const rootThreadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, rootThreadId));
+      const rootTargetKey = `server:${rootThreadKey}` as ThreadSplitTargetKey;
+      const descendants = splitCatalog.filter((entry) => entry.rootThreadKey === rootThreadKey);
+      const result = threadSplitStore.getState().openTaskTree(rootTargetKey, descendants);
+      if (result.groupId === null) {
+        toastManager.add({
+          type: "warning",
+          title: "A task split view needs at least two threads",
+        });
+        return;
+      }
+      if (result.omittedCount > 0) {
+        toastManager.add({
+          type: "info",
+          title: `Opened 12 of ${descendants.length + 1} task threads`,
+          description: `${result.omittedCount} descendants remain available from the split view.`,
+        });
+      }
+      const root = allThreadByKey.get(rootThreadKey);
+      if (root) {
+        void threadNavigation.openTarget(
+          {
+            kind: "server",
+            threadRef: scopeThreadRef(root.environmentId, root.id),
+          },
+          { history: "push", disposition: "activate-existing-group" },
+        );
+      }
+    },
+    [allThreadByKey, splitCatalog, threadNavigation],
   );
 
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
@@ -2062,9 +2228,12 @@ export default function SidebarV2() {
       // right now. Selections can outlive their rows (settled-tail paging,
       // thread deletion elsewhere) and the menu labels must count only what
       // the actions will touch.
-      const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys].filter(
-        (threadKey) => threadByKeyRef.current.has(threadKey),
+      const selectedThreadKeys = useThreadSelectionStore.getState().selectedThreadKeys;
+      const splitSelection = resolveSidebarV2SplitSelection(
+        orderedThreadKeysRef.current.filter((threadKey) => threadByKeyRef.current.has(threadKey)),
+        selectedThreadKeys,
       );
+      const { threadKeys } = splitSelection;
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
       // Snooze (N) is offered when every selected thread can actually take
@@ -2084,6 +2253,11 @@ export default function SidebarV2() {
         api.contextMenu.show(
           [
             { id: "settle", label: `Settle (${count})` },
+            {
+              id: "open-in-split-view",
+              label: splitSelection.label,
+              disabled: splitSelection.disabled,
+            },
             ...(canSnoozeSelection
               ? [
                   {
@@ -2103,6 +2277,27 @@ export default function SidebarV2() {
         ),
       );
       if (clicked._tag === "Failure") return;
+      if (clicked.value === "open-in-split-view") {
+        if (splitSelection.disabled) return;
+        const groupId = threadSplitStore.getState().openTargets(splitSelection.targetKeys, {
+          mode: "new-group",
+          focusTargetKey: `server:${threadKeys[0]}` as ThreadSplitTargetKey,
+        });
+        if (groupId) {
+          const first = threadByKeyRef.current.get(threadKeys[0]!);
+          if (first) {
+            void threadNavigation.openTarget(
+              {
+                kind: "server",
+                threadRef: scopeThreadRef(first.environmentId, first.id),
+              },
+              { history: "push", disposition: "activate-existing-group" },
+            );
+          }
+          clearSelection();
+        }
+        return;
+      }
       if (clicked.value?.startsWith("snooze:")) {
         const preset = snoozePresets.find(
           (candidate) => `snooze:${candidate.id}` === clicked.value,
@@ -2191,6 +2386,7 @@ export default function SidebarV2() {
       markThreadUnread,
       removeFromSelection,
       serverConfigs,
+      threadNavigation,
     ],
   );
 
@@ -2218,6 +2414,22 @@ export default function SidebarV2() {
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
+        const splitTargetKey = `server:${threadKey}` as ThreadSplitTargetKey;
+        const splitSnapshot = threadSplitStore.getState();
+        const owningSplitGroup = getThreadSplitGroupForTarget(splitSnapshot, splitTargetKey);
+        const activeSplitGroup = splitSnapshot.activeGroupId
+          ? splitSnapshot.groups[splitSnapshot.activeGroupId]
+          : undefined;
+        const focusedTarget = threadNavigation.getFocusedTarget();
+        const focusedTargetKey = focusedTarget ? threadRouteTargetToSplitKey(focusedTarget) : null;
+        const rootThreadId = thread.taskRelation?.rootThreadId ?? thread.id;
+        const rootThreadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, rootThreadId));
+        const taskSplitGroup = Object.values(splitSnapshot.groups).find(
+          (group) => group.taskTreeBinding?.rootThreadKey === rootThreadKey,
+        );
+        const hasTaskDescendants = splitCatalog.some(
+          (entry) => entry.rootThreadKey === rootThreadKey,
+        );
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date());
         const clicked = await settlePromise(() =>
@@ -2229,6 +2441,37 @@ export default function SidebarV2() {
                       id: "new-thread-on-branch",
                       label: `New thread on ${thread.branch}`,
                     },
+                  ]
+                : []),
+              ...(owningSplitGroup
+                ? [
+                    { id: "focus-in-split-view", label: "Focus in split view" },
+                    { id: "remove-from-split-view", label: "Remove from split view" },
+                  ]
+                : [
+                    ...(activeSplitGroup
+                      ? [
+                          {
+                            id: "open-in-current-split-view",
+                            label: "Open in current split view",
+                            disabled: activeSplitGroup.targetKeys.length >= 12,
+                          },
+                        ]
+                      : []),
+                    ...(focusedTargetKey && focusedTargetKey !== splitTargetKey
+                      ? [
+                          {
+                            id: "start-split-view",
+                            label: "Start split view with current thread",
+                          },
+                        ]
+                      : []),
+                  ]),
+              ...(hasTaskDescendants
+                ? [
+                    taskSplitGroup
+                      ? { id: "open-task-split-view", label: "Open task split view" }
+                      : { id: "split-task-tree", label: "Split task tree" },
                   ]
                 : []),
               ...(supportsSettlement
@@ -2277,6 +2520,51 @@ export default function SidebarV2() {
           return;
         }
         switch (clicked.value) {
+          case "focus-in-split-view":
+            void threadNavigation.openTarget(
+              { kind: "server", threadRef },
+              { history: "push", disposition: "activate-existing-group" },
+            );
+            return;
+          case "remove-from-split-view":
+            threadSplitStore.getState().removeTarget(splitTargetKey);
+            return;
+          case "open-in-current-split-view": {
+            const currentGroupId = threadSplitStore.getState().activeGroupId;
+            if (!currentGroupId) return;
+            const groupId = threadSplitStore.getState().openTargets([splitTargetKey], {
+              groupId: currentGroupId,
+              mode: "add",
+              focusTargetKey: splitTargetKey,
+            });
+            if (groupId) {
+              void threadNavigation.openTarget(
+                { kind: "server", threadRef },
+                { history: "push", disposition: "activate-existing-group" },
+              );
+            }
+            return;
+          }
+          case "start-split-view": {
+            if (!focusedTargetKey || focusedTargetKey === splitTargetKey) return;
+            const groupId = threadSplitStore
+              .getState()
+              .openTargets([focusedTargetKey, splitTargetKey], {
+                mode: "new-group",
+                focusTargetKey: splitTargetKey,
+              });
+            if (groupId) {
+              void threadNavigation.openTarget(
+                { kind: "server", threadRef },
+                { history: "push", disposition: "activate-existing-group" },
+              );
+            }
+            return;
+          }
+          case "split-task-tree":
+          case "open-task-split-view":
+            openTaskSplitForThread(thread);
+            return;
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
@@ -2378,10 +2666,13 @@ export default function SidebarV2() {
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      openTaskSplitForThread,
       serverConfigs,
       setSidebarTaskUnnested,
       setThreadPin,
       startThreadRename,
+      splitCatalog,
+      threadNavigation,
     ],
   );
 
@@ -2455,6 +2746,107 @@ export default function SidebarV2() {
     if (!node) return;
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
+  const splitDragSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: THREAD_SPLIT_DRAG_ACTIVATION_DISTANCE },
+    }),
+  );
+  const [activeSplitDrag, setActiveSplitDrag] = useState<{
+    targetKey: ThreadSplitTargetKey;
+    title: string;
+  } | null>(null);
+  const handleSplitDragStart = useCallback((event: DragStartEvent) => {
+    const data = event.active.data.current;
+    if (
+      data?.type === "thread-split-target" &&
+      typeof data.targetKey === "string" &&
+      typeof data.title === "string"
+    ) {
+      setActiveSplitDrag({
+        targetKey: data.targetKey as ThreadSplitTargetKey,
+        title: data.title,
+      });
+    }
+  }, []);
+  const handleSplitDragEnd = useCallback((event: DragEndEvent) => {
+    setActiveSplitDrag(null);
+    const result = resolveThreadSplitDrop(
+      threadSplitStore.getState(),
+      event.active.data.current,
+      event.over?.data.current,
+    );
+    if (!result.accepted && result.reason === "full") {
+      toastManager.add({
+        type: "warning",
+        title: result.message ?? "This split view is full",
+      });
+      return;
+    }
+    applyThreadSplitDrop(result, threadSplitStore.getState());
+  }, []);
+  const resolveSplitShelfTarget = useCallback(
+    (targetKey: ThreadSplitTargetKey) => {
+      if (targetKey.startsWith("server:")) {
+        const thread = allThreadByKey.get(targetKey.slice("server:".length));
+        if (thread) {
+          return {
+            title: thread.title,
+            statusLabel: resolveSidebarV2Status(thread),
+            icon: <ThreadSplitIndicator />,
+          };
+        }
+      }
+      return {
+        title: targetKey.startsWith("draft:") ? "Draft thread" : "Unavailable thread",
+        statusLabel: targetKey.startsWith("draft:") ? "Draft" : "Unavailable",
+      };
+    },
+    [allThreadByKey],
+  );
+  const focusSplitTarget = useCallback(
+    (targetKey: ThreadSplitTargetKey) => {
+      const target = splitKeyToThreadRouteTarget(targetKey);
+      if (!target) return;
+      void threadNavigation.openTarget(target, {
+        history: "push",
+        disposition: "activate-existing-group",
+      });
+      if (isMobile) setOpenMobile(false);
+    },
+    [isMobile, setOpenMobile, threadNavigation],
+  );
+  const removeSplitTarget = useCallback(
+    (targetKey: ThreadSplitTargetKey) => {
+      const state = threadSplitStore.getState();
+      const group = getThreadSplitGroupForTarget(state, targetKey);
+      const survivor =
+        group?.targetKeys.length === 2
+          ? group.targetKeys.find((candidate) => candidate !== targetKey)
+          : null;
+      state.removeTarget(targetKey);
+      if (group?.focusedTargetKey === targetKey && survivor) focusSplitTarget(survivor);
+    },
+    [focusSplitTarget],
+  );
+  const closeSplitGroup = useCallback(
+    (groupId: string) => {
+      const state = threadSplitStore.getState();
+      const focused = state.groups[groupId]?.focusedTargetKey;
+      state.closeGroup(groupId);
+      if (focused) focusSplitTarget(focused);
+    },
+    [focusSplitTarget],
+  );
+  const addSplitDescendants = useCallback(
+    (groupId: string, targetKeys: readonly ThreadSplitTargetKey[]) => {
+      const state = threadSplitStore.getState();
+      const group = state.groups[groupId];
+      if (!group) return;
+      const available = targetKeys.slice(0, Math.max(0, 12 - group.targetKeys.length));
+      state.openTargets(available, { groupId, mode: "add" });
+    },
+    [],
+  );
 
   // New thread defaults to the project you're in (active thread's project,
   // falling back to the top project) — same resolution the command palette
@@ -2637,181 +3029,245 @@ export default function SidebarV2() {
         }
       >
         <SidebarGroup className="px-2 pb-1 pt-0">
-          <TooltipProvider
-            key="sidebar-thread-tooltips-150"
-            delay={150}
-            closeDelay={0}
-            timeout={400}
+          <DndContext
+            sensors={splitDragSensors}
+            onDragStart={handleSplitDragStart}
+            onDragCancel={() => setActiveSplitDrag(null)}
+            onDragEnd={handleSplitDragEnd}
           >
-            <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-col gap-px">
-              {(() => {
-                const renderThreadRow = (
-                  taskRow: SidebarTaskTreeRow<EnvironmentThreadShell>,
-                  rootSection: "active" | "snoozed" | "settled",
-                ) => {
-                  const { thread } = taskRow;
-                  const threadKey = scopedThreadKey(
-                    scopeThreadRef(thread.environmentId, thread.id),
+            <ThreadSplitShelf
+              groups={splitShelfGroups}
+              activeGroupId={splitState.activeGroupId}
+              resolveTarget={resolveSplitShelfTarget}
+              onFocusTarget={focusSplitTarget}
+              onRemoveTarget={removeSplitTarget}
+              onSetLayout={(groupId, layoutMode) =>
+                threadSplitStore.getState().configureGroup(groupId, { layoutMode })
+              }
+              onCloseGroup={closeSplitGroup}
+              onAddThreads={() =>
+                toastManager.add({
+                  type: "info",
+                  title: "Add threads from their context menu",
+                  description: "Choose “Open in current split view” on any thread.",
+                })
+              }
+              onAddDescendants={addSplitDescendants}
+              className="-mx-2 pb-3"
+            />
+            <TooltipProvider
+              key="sidebar-thread-tooltips-150"
+              delay={150}
+              closeDelay={0}
+              timeout={400}
+            >
+              <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-col gap-px">
+                {(() => {
+                  const renderThreadRow = (
+                    taskRow: SidebarTaskTreeRow<EnvironmentThreadShell>,
+                    rootSection: "active" | "snoozed" | "settled",
+                  ) => {
+                    const { thread } = taskRow;
+                    const threadKey = scopedThreadKey(
+                      scopeThreadRef(thread.environmentId, thread.id),
+                    );
+                    // Visual roots keep normal v2 lifecycle density. Nested
+                    // children/grandchildren always collapse to one line.
+                    const isCard = rootSection === "active" && taskRow.depth === 0;
+                    const rowVariant = isCard ? "card" : "slim";
+                    const taskGroup =
+                      taskRow.depth === 0
+                        ? taskTreeGroupByRootKey.get(taskRow.threadKey)
+                        : undefined;
+                    const taskChildCount = Math.max(0, (taskGroup?.rows.length ?? 1) - 1);
+                    return (
+                      <SidebarV2Row
+                        // Keyed per variant on purpose: when a thread settles,
+                        // the card fades out in place and the slim row fades
+                        // in at its settled position instead of one element
+                        // FLIP-sliding through every row in between (rows here
+                        // are translucent, so a crossing row reads as text
+                        // painted over text).
+                        key={`${threadKey}:${rowVariant}:${taskRow.depth}`}
+                        thread={thread}
+                        variant={rowVariant}
+                        nestingDepth={taskRow.depth}
+                        taskChildCount={taskChildCount}
+                        taskTreeExpanded={!collapsedTaskRootKeys.has(taskRow.threadKey)}
+                        // Snoozed rows wake; settled rows un-settle (explicit
+                        // settles clear the override, auto-settled rows get
+                        // pinned active); cards settle.
+                        variantAction={
+                          taskRow.section === "snoozed"
+                            ? "unsnooze"
+                            : taskRow.section === "settled"
+                              ? "unsettle"
+                              : "settle"
+                        }
+                        settlementSupported={
+                          serverConfigs.get(thread.environmentId)?.environment.capabilities
+                            .threadSettlement === true
+                        }
+                        snoozeSupported={
+                          serverConfigs.get(thread.environmentId)?.environment.capabilities
+                            .threadSnooze === true
+                        }
+                        snoozeWakeLabelText={
+                          taskRow.section === "snoozed" && thread.snoozedUntil != null
+                            ? snoozeWakeLabel(thread.snoozedUntil, new Date())
+                            : null
+                        }
+                        // All sections: a woken thread can classify straight
+                        // into the settled tail (PR merged while snoozed), and
+                        // the wake signal must survive the trip. Still-snoozed
+                        // rows resolve to null on their own.
+                        wokeAt={threadWokeAt(thread, { now: snoozeNow })}
+                        isActive={routeThreadKey === threadKey}
+                        jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
+                        currentEnvironmentId={primaryEnvironmentId}
+                        environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
+                        projectCwd={
+                          projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                        }
+                        projectTitle={
+                          projectDisplayNameByKey.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
+                        }
+                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        onThreadClick={handleThreadClick}
+                        onThreadActivate={navigateToThread}
+                        onStartRename={startThreadRename}
+                        onRenameTitleChange={setRenamingTitle}
+                        onCommitRename={commitThreadRename}
+                        onCancelRename={cancelThreadRename}
+                        isRenaming={renamingThreadKey === threadKey}
+                        renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
+                        onContextMenu={handleThreadContextMenu}
+                        onSettle={attemptSettle}
+                        onUnsettle={attemptUnsettle}
+                        onSnooze={attemptSnooze}
+                        onUnsnooze={attemptUnsnooze}
+                        onToggleTaskTree={toggleTaskTree}
+                        inSplitView={
+                          getThreadSplitGroupForTarget(
+                            splitState,
+                            `server:${threadKey}` as ThreadSplitTargetKey,
+                          ) !== undefined
+                        }
+                        validSplitDropTarget={
+                          activeSplitDrag !== null &&
+                          isValidThreadSplitDropTarget(
+                            splitState,
+                            threadSplitDragData(activeSplitDrag.targetKey, activeSplitDrag.title),
+                            threadSplitTargetDropData(
+                              `server:${threadKey}` as ThreadSplitTargetKey,
+                            ),
+                          )
+                        }
+                      />
+                    );
+                  };
+                  const items: ReactNode[] = activeTaskRows.map((row) =>
+                    renderThreadRow(row, "active"),
                   );
-                  // Visual roots keep normal v2 lifecycle density. Nested
-                  // children/grandchildren always collapse to one line.
-                  const isCard = rootSection === "active" && taskRow.depth === 0;
-                  const rowVariant = isCard ? "card" : "slim";
-                  const taskGroup =
-                    taskRow.depth === 0 ? taskTreeGroupByRootKey.get(taskRow.threadKey) : undefined;
-                  const taskChildCount = Math.max(0, (taskGroup?.rows.length ?? 1) - 1);
-                  return (
-                    <SidebarV2Row
-                      // Keyed per variant on purpose: when a thread settles,
-                      // the card fades out in place and the slim row fades
-                      // in at its settled position instead of one element
-                      // FLIP-sliding through every row in between (rows here
-                      // are translucent, so a crossing row reads as text
-                      // painted over text).
-                      key={`${threadKey}:${rowVariant}:${taskRow.depth}`}
-                      thread={thread}
-                      variant={rowVariant}
-                      nestingDepth={taskRow.depth}
-                      taskChildCount={taskChildCount}
-                      taskTreeExpanded={!collapsedTaskRootKeys.has(taskRow.threadKey)}
-                      // Snoozed rows wake; settled rows un-settle (explicit
-                      // settles clear the override, auto-settled rows get
-                      // pinned active); cards settle.
-                      variantAction={
-                        taskRow.section === "snoozed"
-                          ? "unsnooze"
-                          : taskRow.section === "settled"
-                            ? "unsettle"
-                            : "settle"
-                      }
-                      settlementSupported={
-                        serverConfigs.get(thread.environmentId)?.environment.capabilities
-                          .threadSettlement === true
-                      }
-                      snoozeSupported={
-                        serverConfigs.get(thread.environmentId)?.environment.capabilities
-                          .threadSnooze === true
-                      }
-                      snoozeWakeLabelText={
-                        taskRow.section === "snoozed" && thread.snoozedUntil != null
-                          ? snoozeWakeLabel(thread.snoozedUntil, new Date())
-                          : null
-                      }
-                      // All sections: a woken thread can classify straight
-                      // into the settled tail (PR merged while snoozed), and
-                      // the wake signal must survive the trip. Still-snoozed
-                      // rows resolve to null on their own.
-                      wokeAt={threadWokeAt(thread, { now: snoozeNow })}
-                      isActive={routeThreadKey === threadKey}
-                      jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
-                      currentEnvironmentId={primaryEnvironmentId}
-                      environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
-                      projectCwd={
-                        projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
-                      }
-                      projectTitle={
-                        projectDisplayNameByKey.get(
-                          `${thread.environmentId}:${thread.projectId}`,
-                        ) ?? null
-                      }
-                      providerEntryByInstanceId={providerEntryByInstanceId}
-                      onThreadClick={handleThreadClick}
-                      onThreadActivate={navigateToThread}
-                      onStartRename={startThreadRename}
-                      onRenameTitleChange={setRenamingTitle}
-                      onCommitRename={commitThreadRename}
-                      onCancelRename={cancelThreadRename}
-                      isRenaming={renamingThreadKey === threadKey}
-                      renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
-                      onContextMenu={handleThreadContextMenu}
-                      onSettle={attemptSettle}
-                      onUnsettle={attemptUnsettle}
-                      onSnooze={attemptSnooze}
-                      onUnsnooze={attemptUnsnooze}
-                      onToggleTaskTree={toggleTaskTree}
-                    />
-                  );
-                };
-                const items: ReactNode[] = activeTaskRows.map((row) =>
-                  renderThreadRow(row, "active"),
-                );
-                // Snoozed shelf: between the inbox and Settled — out of the
-                // way, never gone. The header always renders while anything
-                // is snoozed (the count is the whole footprint when
-                // collapsed); rows only when expanded. Vanishes entirely at
-                // count 0.
-                if (snoozedTaskRows.length > 0) {
-                  items.push(
-                    <li key="snoozed-shelf-header" data-thread-selection-safe className="list-none">
-                      <button
-                        type="button"
-                        onClick={toggleSnoozedShelf}
-                        aria-expanded={snoozedShelfExpanded}
-                        data-testid="sidebar-v2-snoozed-shelf-toggle"
-                        className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                  // Snoozed shelf: between the inbox and Settled — out of the
+                  // way, never gone. The header always renders while anything
+                  // is snoozed (the count is the whole footprint when
+                  // collapsed); rows only when expanded. Vanishes entirely at
+                  // count 0.
+                  if (snoozedTaskRows.length > 0) {
+                    items.push(
+                      <li
+                        key="snoozed-shelf-header"
+                        data-thread-selection-safe
+                        className="list-none"
                       >
-                        <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                          {snoozedShelfExpanded ? "Snoozed" : `Snoozed (${snoozedTaskRows.length})`}
-                        </span>
-                        <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
-                        <ChevronDownIcon
-                          aria-hidden
-                          className={cn(
-                            "size-3 text-blue-600 transition-transform dark:text-blue-400",
-                            snoozedShelfExpanded && "rotate-180",
-                          )}
-                        />
-                      </button>
-                    </li>,
-                  );
-                  for (const row of visibleSnoozedTaskRows) {
-                    items.push(renderThreadRow(row, "snoozed"));
+                        <button
+                          type="button"
+                          onClick={toggleSnoozedShelf}
+                          aria-expanded={snoozedShelfExpanded}
+                          data-testid="sidebar-v2-snoozed-shelf-toggle"
+                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                        >
+                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                            {snoozedShelfExpanded
+                              ? "Snoozed"
+                              : `Snoozed (${snoozedTaskRows.length})`}
+                          </span>
+                          <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
+                          <ChevronDownIcon
+                            aria-hidden
+                            className={cn(
+                              "size-3 text-blue-600 transition-transform dark:text-blue-400",
+                              snoozedShelfExpanded && "rotate-180",
+                            )}
+                          />
+                        </button>
+                      </li>,
+                    );
+                    for (const row of visibleSnoozedTaskRows) {
+                      items.push(renderThreadRow(row, "snoozed"));
+                    }
                   }
-                }
-                if (settledTaskRows.length > 0) {
-                  items.push(
-                    <li key="settled-shelf-header" data-thread-selection-safe className="list-none">
-                      <button
-                        type="button"
-                        onClick={toggleSettledShelf}
-                        aria-expanded={settledShelfExpanded}
-                        data-testid="sidebar-v2-settled-shelf-toggle"
-                        className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                  if (settledTaskRows.length > 0) {
+                    items.push(
+                      <li
+                        key="settled-shelf-header"
+                        data-thread-selection-safe
+                        className="list-none"
                       >
-                        <span className="text-xs font-medium text-muted-foreground/50">
-                          {settledShelfExpanded ? "Settled" : `Settled (${settledTaskRows.length})`}
-                        </span>
-                        <span className="h-px flex-1 bg-sidebar-border/60" />
-                        <ChevronDownIcon
-                          aria-hidden
-                          className={cn(
-                            "size-3 text-muted-foreground/50 transition-transform",
-                            settledShelfExpanded && "rotate-180",
-                          )}
-                        />
-                      </button>
-                    </li>,
-                  );
-                }
-                for (const row of renderedSettledTaskRows) {
-                  items.push(renderThreadRow(row, "settled"));
-                }
-                return items;
-              })()}
-              {settledShelfExpanded && hiddenSettledCount > 0 ? (
-                <li className="list-none">
-                  <button
-                    type="button"
-                    onClick={showMoreSettled}
-                    className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  >
-                    <PlusIcon aria-hidden className="size-4 shrink-0" />
-                    Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
-                  </button>
-                </li>
+                        <button
+                          type="button"
+                          onClick={toggleSettledShelf}
+                          aria-expanded={settledShelfExpanded}
+                          data-testid="sidebar-v2-settled-shelf-toggle"
+                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                        >
+                          <span className="text-xs font-medium text-muted-foreground/50">
+                            {settledShelfExpanded
+                              ? "Settled"
+                              : `Settled (${settledTaskRows.length})`}
+                          </span>
+                          <span className="h-px flex-1 bg-sidebar-border/60" />
+                          <ChevronDownIcon
+                            aria-hidden
+                            className={cn(
+                              "size-3 text-muted-foreground/50 transition-transform",
+                              settledShelfExpanded && "rotate-180",
+                            )}
+                          />
+                        </button>
+                      </li>,
+                    );
+                  }
+                  for (const row of renderedSettledTaskRows) {
+                    items.push(renderThreadRow(row, "settled"));
+                  }
+                  return items;
+                })()}
+                {settledShelfExpanded && hiddenSettledCount > 0 ? (
+                  <li className="list-none">
+                    <button
+                      type="button"
+                      onClick={showMoreSettled}
+                      className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                    >
+                      <PlusIcon aria-hidden className="size-4 shrink-0" />
+                      Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                    </button>
+                  </li>
+                ) : null}
+              </ul>
+            </TooltipProvider>
+            <DragOverlay>
+              {activeSplitDrag ? (
+                <div className="max-w-64 truncate rounded-md border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg">
+                  {activeSplitDrag.title}
+                </div>
               ) : null}
-            </ul>
-          </TooltipProvider>
+            </DragOverlay>
+          </DndContext>
           {activeTaskRows.length + snoozedTaskRows.length + settledTaskRows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (

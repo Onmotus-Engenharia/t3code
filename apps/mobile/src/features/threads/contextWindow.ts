@@ -1,4 +1,5 @@
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { OrchestrationThreadShell, ProviderRateLimits } from "@t3tools/contracts";
+import { selectCodexUsageWindows } from "@t3tools/shared/providerRateLimits";
 
 export interface TaskTreeContextWindowUsage {
   readonly taskCount: number;
@@ -67,4 +68,56 @@ export function formatContextUsage(usage: {
   return usage.maxTokens !== undefined && usage.maxTokens !== null && usage.maxTokens > 0
     ? `${used} / ${formatContextWindowTokens(usage.maxTokens)}`
     : `${used} used`;
+}
+
+export interface ContextInfoAction {
+  readonly id: string;
+  readonly title: string;
+  readonly subtitle: string;
+}
+
+export function buildContextInfoActions(input: {
+  readonly currentUsage: NonNullable<OrchestrationThreadShell["latestTokenUsage"]>;
+  readonly taskTreeUsage: TaskTreeContextWindowUsage | null;
+  readonly fullDiffStat: { readonly additions: number; readonly deletions: number } | null;
+  readonly codexRateLimits: ProviderRateLimits | null;
+}): ContextInfoAction[] {
+  const actions: ContextInfoAction[] = [
+    {
+      id: "context-current",
+      title: "Current thread",
+      subtitle: `${formatContextUsage(input.currentUsage)} · ${formatContextWindowTokens(input.currentUsage.totalProcessedTokens ?? input.currentUsage.usedTokens)} processed`,
+    },
+  ];
+  if (input.taskTreeUsage) {
+    actions.push({
+      id: "context-all-tasks",
+      title: `All tasks (${input.taskTreeUsage.taskCount})`,
+      subtitle: `${formatContextUsage(input.taskTreeUsage)} · ${formatContextWindowTokens(input.taskTreeUsage.totalProcessedTokens)} processed`,
+    });
+  }
+  if (input.fullDiffStat) {
+    actions.push({
+      id: "context-full-diff",
+      title: input.taskTreeUsage ? "Full task tree" : "Full thread",
+      subtitle: `+${input.fullDiffStat.additions} / -${input.fullDiffStat.deletions} lines`,
+    });
+  }
+
+  const codexUsage = selectCodexUsageWindows(input.codexRateLimits);
+  if (codexUsage.fiveHour) {
+    actions.push({
+      id: "context-codex-5h",
+      title: "Codex 5h",
+      subtitle: `${Math.round(Math.max(0, Math.min(100, codexUsage.fiveHour.usedPercent)))}% used`,
+    });
+  }
+  if (codexUsage.weekly) {
+    actions.push({
+      id: "context-codex-weekly",
+      title: "Codex weekly",
+      subtitle: `${Math.round(Math.max(0, Math.min(100, codexUsage.weekly.usedPercent)))}% used`,
+    });
+  }
+  return actions;
 }

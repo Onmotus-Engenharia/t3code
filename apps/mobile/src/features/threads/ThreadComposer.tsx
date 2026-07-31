@@ -14,6 +14,7 @@ import {
   serializeComposerFileLink,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
+import { selectLatestCodexRateLimits } from "@t3tools/shared/providerRateLimits";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -68,8 +69,12 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { orchestrationEnvironment } from "../../state/orchestration";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import {
+  buildContextInfoActions,
   formatContextUsage,
   formatContextWindowTokens,
   type TaskTreeContextWindowUsage,
@@ -104,6 +109,7 @@ export interface ThreadComposerProps {
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: OrchestrationThreadShell;
   readonly taskTreeContextWindowUsage: TaskTreeContextWindowUsage | null;
+  readonly contextDiffToTurnCount: number | null;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -681,24 +687,54 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     [currentInteractionMode, currentRuntimeMode, providerOptionDescriptors],
   );
   const currentContextUsage = props.selectedThread.latestTokenUsage;
+  const contextFullDiffStat = useEnvironmentQuery(
+    currentContextUsage && props.contextDiffToTurnCount !== null
+      ? orchestrationEnvironment.fullThreadDiffStat({
+          environmentId: props.environmentId,
+          input: {
+            threadId: props.selectedThread.id,
+            toTurnCount: props.contextDiffToTurnCount,
+            ignoreWhitespace: false,
+          },
+        })
+      : null,
+  ).data;
+  const contextRateLimitSnapshots = useEnvironmentQuery(
+    currentContextUsage && currentModelOption?.providerDriver === "codex"
+      ? serverEnvironment.providerRateLimits({
+          environmentId: props.environmentId,
+          input: {},
+        })
+      : null,
+  ).data;
+  const contextCodexRateLimits = useMemo(
+    () =>
+      currentModelOption?.providerDriver === "codex"
+        ? selectLatestCodexRateLimits(
+            contextRateLimitSnapshots ?? [],
+            new Set([currentModelSelection.instanceId]),
+          )
+        : null,
+    [
+      contextRateLimitSnapshots,
+      currentModelOption?.providerDriver,
+      currentModelSelection.instanceId,
+    ],
+  );
   const contextUsageActions = useMemo(() => {
     if (!currentContextUsage) return [];
-    const actions = [
-      {
-        id: "context-current",
-        title: "Current thread",
-        subtitle: `${formatContextUsage(currentContextUsage)} · ${formatContextWindowTokens(currentContextUsage.totalProcessedTokens ?? currentContextUsage.usedTokens)} processed`,
-      },
-    ];
-    if (props.taskTreeContextWindowUsage) {
-      actions.push({
-        id: "context-all-tasks",
-        title: `All tasks (${props.taskTreeContextWindowUsage.taskCount})`,
-        subtitle: `${formatContextUsage(props.taskTreeContextWindowUsage)} · ${formatContextWindowTokens(props.taskTreeContextWindowUsage.totalProcessedTokens)} processed`,
-      });
-    }
-    return actions;
-  }, [currentContextUsage, props.taskTreeContextWindowUsage]);
+    return buildContextInfoActions({
+      currentUsage: currentContextUsage,
+      taskTreeUsage: props.taskTreeContextWindowUsage,
+      fullDiffStat: contextFullDiffStat,
+      codexRateLimits: contextCodexRateLimits,
+    });
+  }, [
+    contextCodexRateLimits,
+    contextFullDiffStat,
+    currentContextUsage,
+    props.taskTreeContextWindowUsage,
+  ]);
 
   // ── Menu handlers ────────────────────────────────────────
   function handleModelMenuAction(event: string) {

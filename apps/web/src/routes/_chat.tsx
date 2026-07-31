@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
@@ -21,12 +21,20 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+import { resolveThreadRouteTarget } from "../threadRoutes";
+import { useSplitViewCommands } from "../splitViewCommands";
+import { ThreadSplitReconciler } from "../components/thread-split/ThreadSplitReconciler";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const { execute: executeSplitViewCommand, splitViewActive } = useSplitViewCommands(routeTarget);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const sidebarV2Enabled = useSidebarV2Enabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -64,10 +72,18 @@ function ChatRouteGlobalShortcuts() {
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
+          splitViewActive,
         },
       });
 
       if (isCommandPaletteOpen()) {
+        return;
+      }
+
+      if (command?.startsWith("splitView.") && splitViewActive) {
+        event.preventDefault();
+        event.stopPropagation();
+        void executeSplitViewCommand(command);
         return;
       }
 
@@ -163,11 +179,13 @@ function ChatRouteGlobalShortcuts() {
     handleNewThread,
     keybindings,
     defaultProjectRef,
+    executeSplitViewCommand,
     previewOpen,
     projectGroupCount,
     routeThreadRef,
     selectedThreadKeysSize,
     sidebarV2Enabled,
+    splitViewActive,
     terminalOpen,
   ]);
 
@@ -177,6 +195,7 @@ function ChatRouteGlobalShortcuts() {
 function ChatRouteLayout() {
   return (
     <>
+      <ThreadSplitReconciler />
       <ChatRouteGlobalShortcuts />
       <Outlet />
     </>

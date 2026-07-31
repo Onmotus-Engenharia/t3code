@@ -81,7 +81,11 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
+import {
+  buildThreadRouteParams,
+  resolveThreadRouteTarget,
+  threadRouteTargetToSplitKey,
+} from "../threadRoutes";
 import {
   applyWslEnvironmentConfiguration,
   parseWslUncPath,
@@ -133,6 +137,8 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "../sidebarProjectGrouping";
+import { useSplitViewCommands } from "../splitViewCommands";
+import { THREAD_SPLIT_MAX_PANES, threadSplitStore } from "../threadSplitStore";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -393,7 +399,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
-  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const splitCommands = useSplitViewCommands(routeTarget);
+  const focusedTarget = splitCommands.focusedTarget;
+  const routeThreadRef = focusedTarget?.kind === "server" ? focusedTarget.threadRef : null;
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -407,6 +415,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         context: {
           terminalFocus: isTerminalFocused(),
           terminalOpen,
+          splitViewActive: splitCommands.splitViewActive,
         },
       });
       if (command !== "commandPalette.toggle") {
@@ -418,7 +427,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, terminalOpen, toggleOpen]);
+  }, [keybindings, splitCommands.splitViewActive, terminalOpen, toggleOpen]);
 
   useEffect(
     () =>
@@ -499,6 +508,11 @@ function OpenCommandPaletteDialog(props: {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const splitCommands = useSplitViewCommands(routeTarget);
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -1300,6 +1314,173 @@ function OpenCommandPaletteDialog(props: {
       openAddProjectFlow();
     },
   });
+
+  const focusedServerTarget =
+    splitCommands.focusedTarget?.kind === "server" ? splitCommands.focusedTarget : null;
+  const focusedServerThread = focusedServerTarget
+    ? threads.find(
+        (thread) =>
+          thread.environmentId === focusedServerTarget.threadRef.environmentId &&
+          thread.id === focusedServerTarget.threadRef.threadId,
+      )
+    : null;
+  const focusedRootThreadId =
+    focusedServerThread?.taskRelation?.rootThreadId ?? focusedServerThread?.id ?? null;
+  const focusedTaskDescendantCount = focusedRootThreadId
+    ? threads.filter(
+        (thread) =>
+          thread.environmentId === focusedServerThread?.environmentId &&
+          thread.taskRelation?.rootThreadId === focusedRootThreadId,
+      ).length
+    : 0;
+
+  if (focusedServerTarget && focusedTaskDescendantCount > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "action:split-task-tree",
+      searchTerms: ["split task tree", "task descendants", "open panes"],
+      title: "Split task tree",
+      description: `${focusedTaskDescendantCount + 1} threads`,
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "splitView.toggleTaskTree",
+      run: async () => {
+        const result = await splitCommands.splitTaskTree();
+        if (result && result.omittedCount > 0) {
+          toastManager.add({
+            type: "info",
+            title: "Task split view limited to 12 panes",
+            description: `${result.omittedCount} descendant${
+              result.omittedCount === 1 ? "" : "s"
+            } remain available to add.`,
+          });
+        }
+      },
+    });
+  }
+
+  const activeSplitGroup = splitCommands.group;
+  if (activeSplitGroup) {
+    const remainingCapacity = THREAD_SPLIT_MAX_PANES - activeSplitGroup.targetKeys.length;
+    const addThreadItems =
+      remainingCapacity <= 0
+        ? []
+        : buildThreadActionItems({
+            threads: threads.filter(
+              (thread) =>
+                !activeSplitGroup.targetKeys.includes(
+                  threadRouteTargetToSplitKey({
+                    kind: "server",
+                    threadRef: scopeThreadRef(thread.environmentId, thread.id),
+                  }),
+                ),
+            ),
+            projectTitleById,
+            sortOrder: clientSettings.sidebarThreadSortOrder,
+            icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+            runThread: async (thread) => {
+              const target = {
+                kind: "server" as const,
+                threadRef: scopeThreadRef(thread.environmentId, thread.id),
+              };
+              const targetKey = threadRouteTargetToSplitKey(target);
+              const current = threadSplitStore.getState();
+              const group = current.groups[activeSplitGroup.id];
+              if (!group || group.targetKeys.length >= THREAD_SPLIT_MAX_PANES) return;
+              current.openTargets([targetKey], {
+                groupId: group.id,
+                mode: "add",
+                focusTargetKey: targetKey,
+              });
+              await splitCommands.navigation.openTarget(target, {
+                history: "push",
+                disposition: "activate-existing-group",
+              });
+            },
+          });
+
+    actionItems.push({
+      kind: "submenu",
+      value: "action:add-threads-to-split",
+      searchTerms: ["add threads current split view panes descendants"],
+      title: "Add threads to current split view...",
+      description:
+        remainingCapacity > 0
+          ? `${activeSplitGroup.targetKeys.length} of ${THREAD_SPLIT_MAX_PANES} panes`
+          : "Split view is full",
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <MessageSquareIcon className={ADDON_ICON_CLASS} />,
+      disabled: addThreadItems.length === 0,
+      groups: [{ value: "split-threads", label: "Threads", items: addThreadItems }],
+    });
+
+    const splitAction = (
+      value: string,
+      title: string,
+      searchTerms: string[],
+      command:
+        | "splitView.removeFocusedPane"
+        | "splitView.closeGroup"
+        | "splitView.layoutAuto"
+        | "splitView.layoutColumns"
+        | "splitView.layoutRows"
+        | "splitView.focusPrevious"
+        | "splitView.focusNext",
+    ): CommandPaletteActionItem => ({
+      kind: "action",
+      value,
+      searchTerms,
+      title,
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: command,
+      run: async () => {
+        await splitCommands.execute(command);
+      },
+    });
+    actionItems.push(
+      splitAction(
+        "action:remove-focused-split-pane",
+        "Remove focused pane",
+        ["remove focused pane split view"],
+        "splitView.removeFocusedPane",
+      ),
+      splitAction(
+        "action:close-split-view",
+        "Close split view",
+        ["close split view dissolve group"],
+        "splitView.closeGroup",
+      ),
+      splitAction(
+        "action:split-layout-auto",
+        "Use Auto layout",
+        ["split view auto layout"],
+        "splitView.layoutAuto",
+      ),
+      splitAction(
+        "action:split-layout-columns",
+        "Arrange side by side",
+        ["split view columns side by side layout"],
+        "splitView.layoutColumns",
+      ),
+      splitAction(
+        "action:split-layout-rows",
+        "Arrange top and bottom",
+        ["split view rows top bottom layout"],
+        "splitView.layoutRows",
+      ),
+      splitAction(
+        "action:focus-previous-split-pane",
+        "Focus previous split pane",
+        ["focus previous split pane"],
+        "splitView.focusPrevious",
+      ),
+      splitAction(
+        "action:focus-next-split-pane",
+        "Focus next split pane",
+        ["focus next split pane"],
+        "splitView.focusNext",
+      ),
+    );
+  }
 
   if (wslAddProjectEnvironmentOption) {
     actionItems.push({

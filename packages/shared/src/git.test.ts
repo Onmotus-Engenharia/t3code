@@ -2,6 +2,7 @@ import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts"
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  countUnifiedDiffLines,
   applyGitStatusStreamEvent,
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
@@ -9,6 +10,26 @@ import {
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
+
+describe("countUnifiedDiffLines", () => {
+  it("counts exact net additions and deletions without file headers", () => {
+    expect(
+      countUnifiedDiffLines(
+        [
+          "diff --git a/src/a.ts b/src/a.ts",
+          "--- a/src/a.ts",
+          "+++ b/src/a.ts",
+          "@@ -1,3 +1,4 @@",
+          " unchanged",
+          "-old",
+          "+new",
+          "+++content beginning with pluses",
+          "+added",
+        ].join("\n"),
+      ),
+    ).toEqual({ additions: 3, deletions: 1 });
+  });
+});
 
 describe("normalizeGitRemoteUrl", () => {
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {

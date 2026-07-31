@@ -129,7 +129,14 @@ describe("KeybindingsSettings.logic", () => {
     const options = buildWhenVariableOptions();
 
     expect(options).toEqual(
-      expect.arrayContaining(["terminalFocus", "terminalOpen", "modelPickerOpen", "true", "false"]),
+      expect.arrayContaining([
+        "terminalFocus",
+        "terminalOpen",
+        "modelPickerOpen",
+        "splitViewActive",
+        "true",
+        "false",
+      ]),
     );
     expect(options).not.toContain("customModeActive");
   });
@@ -150,6 +157,26 @@ describe("KeybindingsSettings.logic", () => {
     ] satisfies ResolvedKeybindingsConfig);
 
     expect(options).toEqual(expect.arrayContaining(["chat.new", "script.setup-db.run"]));
+    expect(options).toEqual(
+      expect.arrayContaining([
+        "splitView.focusPrevious",
+        "splitView.focusNext",
+        "splitView.removeFocusedPane",
+        "splitView.closeGroup",
+        "splitView.toggleTaskTree",
+        "splitView.layoutAuto",
+        "splitView.layoutColumns",
+        "splitView.layoutRows",
+      ]),
+    );
+  });
+
+  it("keeps unassigned split-view commands discoverable with older server defaults", () => {
+    const options = buildKeybindingCommandOptions([]);
+
+    expect(options).toContain("splitView.removeFocusedPane");
+    expect(options).toContain("splitView.layoutRows");
+    expect(commandLabel("splitView.removeFocusedPane")).toBe("Split View: Remove Focused Pane");
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {

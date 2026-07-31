@@ -1,6 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { DraftId } from "./composerDraftStore";
+import type { ThreadSplitTargetKey } from "./threadSplitStore";
 
 export type ThreadRouteTarget =
   | {
@@ -19,6 +20,34 @@ type DraftThreadRouteState = {
 };
 
 export type ThreadRouteRenderState = "loading" | "ready" | "missing";
+
+export function threadRouteTargetToSplitKey(target: ThreadRouteTarget): ThreadSplitTargetKey {
+  return target.kind === "server"
+    ? `server:${target.threadRef.environmentId}:${target.threadRef.threadId}`
+    : `draft:${target.draftId}`;
+}
+
+export function splitKeyToThreadRouteTarget(
+  targetKey: ThreadSplitTargetKey,
+): ThreadRouteTarget | null {
+  if (targetKey.startsWith("draft:")) {
+    return {
+      kind: "draft",
+      draftId: targetKey.slice("draft:".length) as DraftId,
+    };
+  }
+  const threadRef = resolveThreadRouteRefFromKey(targetKey.slice("server:".length));
+  return threadRef ? { kind: "server", threadRef } : null;
+}
+
+function resolveThreadRouteRefFromKey(key: string): ScopedThreadRef | null {
+  const separator = key.indexOf(":");
+  if (separator <= 0 || separator === key.length - 1) return null;
+  return scopeThreadRef(
+    key.slice(0, separator) as EnvironmentId,
+    key.slice(separator + 1) as ThreadId,
+  );
+}
 
 export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;

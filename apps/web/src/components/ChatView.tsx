@@ -115,8 +115,6 @@ import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
-import { useMediaQuery } from "../hooks/useMediaQuery";
-import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
@@ -139,7 +137,6 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { RightPanelTabs } from "./RightPanelTabs";
-import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
@@ -169,6 +166,11 @@ import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import {
+  type PersistentTerminalPaneRuntime,
+  shouldHandleThreadPaneGlobalActivity,
+  useThreadPaneRuntime,
+} from "./thread-split/ThreadPaneRuntimeContext";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -176,7 +178,11 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
+import {
+  buildDraftThreadRouteParams,
+  buildThreadRouteParams,
+  type ThreadRouteTarget,
+} from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -485,7 +491,7 @@ interface TerminalLaunchContext {
   worktreePath: string | null;
 }
 
-type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "worktreePath">;
+export type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "worktreePath">;
 
 function useLocalDispatchState(input: {
   activeThread: Thread | undefined;
@@ -591,33 +597,21 @@ function serverTerminalIdsStrictSubsetOfClient(
   return true;
 }
 
-interface PersistentThreadTerminalDrawerProps {
+export interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
-  threadId: ThreadId;
   visible: boolean;
-  launchContext: PersistentTerminalLaunchContext | null;
-  focusRequestId: number;
-  splitShortcutLabel: string | undefined;
-  splitVerticalShortcutLabel: string | undefined;
-  newShortcutLabel: string | undefined;
-  closeShortcutLabel: string | undefined;
-  keybindings: ResolvedKeybindingsConfig;
-  onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  runtime: PersistentTerminalPaneRuntime | null;
 }
 
-const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
+export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
   threadRef,
-  threadId,
   visible,
-  launchContext,
-  focusRequestId,
-  splitShortcutLabel,
-  splitVerticalShortcutLabel,
-  newShortcutLabel,
-  closeShortcutLabel,
-  keybindings,
-  onAddTerminalContext,
+  runtime,
 }: PersistentThreadTerminalDrawerProps) {
+  const threadId = threadRef.threadId;
+  const launchContext = runtime?.launchContext ?? null;
+  const focusRequestId = runtime?.focusRequestId ?? 0;
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -631,6 +625,35 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const project = useProject(projectRef);
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
+  );
+  const terminalShortcutLabelOptions = useMemo(
+    () => ({
+      context: {
+        terminalFocus: true,
+        terminalOpen: Boolean(terminalUiState.terminalOpen),
+      },
+    }),
+    [terminalUiState.terminalOpen],
+  );
+  const splitShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "terminal.split",
+    terminalShortcutLabelOptions,
+  );
+  const splitVerticalShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "terminal.splitVertical",
+    terminalShortcutLabelOptions,
+  );
+  const newShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "terminal.new",
+    terminalShortcutLabelOptions,
+  );
+  const closeShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "terminal.close",
+    terminalShortcutLabelOptions,
   );
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
@@ -895,12 +918,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 
   const handleAddTerminalContext = useCallback(
     (selection: TerminalContextSelection) => {
-      if (!visible) {
+      if (!visible || !runtime) {
         return;
       }
-      onAddTerminalContext(selection);
+      runtime.onAddTerminalContext(selection);
     },
-    [onAddTerminalContext, visible],
+    [runtime, visible],
   );
 
   if (!project || !terminalUiState.terminalOpen || !cwd) {
@@ -926,10 +949,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         onSplitTerminal={splitTerminal}
         onSplitTerminalVertical={splitTerminalVertical}
         onNewTerminal={createNewTerminal}
-        splitShortcutLabel={visible ? splitShortcutLabel : undefined}
-        splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
-        newShortcutLabel={visible ? newShortcutLabel : undefined}
-        closeShortcutLabel={visible ? closeShortcutLabel : undefined}
+        splitShortcutLabel={visible ? (splitShortcutLabel ?? undefined) : undefined}
+        splitVerticalShortcutLabel={visible ? (splitVerticalShortcutLabel ?? undefined) : undefined}
+        newShortcutLabel={visible ? (newShortcutLabel ?? undefined) : undefined}
+        closeShortcutLabel={visible ? (closeShortcutLabel ?? undefined) : undefined}
         keybindings={keybindings}
         onActiveTerminalChange={activateTerminal}
         onCloseTerminal={closeTerminal}
@@ -1133,6 +1156,8 @@ function ChatViewContent(props: ChatViewProps) {
     forceExpandedMobileComposer = false,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
+  const paneRuntime = useThreadPaneRuntime();
+  const handlesPaneGlobalActivity = shouldHandleThreadPaneGlobalActivity(paneRuntime);
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -1208,6 +1233,31 @@ function ChatViewContent(props: ChatViewProps) {
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
   const navigate = useNavigate();
+  const navigateToThreadTarget = useCallback(
+    async (target: ThreadRouteTarget, history: "push" | "replace" = "push") => {
+      if (paneRuntime.navigation) {
+        await paneRuntime.navigation.openTarget(target, {
+          history,
+          disposition: "replace-focused-pane",
+        });
+        return;
+      }
+      if (target.kind === "draft") {
+        await navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(target.draftId),
+          replace: history === "replace",
+        });
+        return;
+      }
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(target.threadRef),
+        replace: history === "replace",
+      });
+    },
+    [navigate, paneRuntime.navigation],
+  );
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
@@ -1276,7 +1326,24 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
-  const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const chatViewContainerRef = useRef<HTMLDivElement | null>(null);
+  const [paneWidth, setPaneWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const container = chatViewContainerRef.current;
+    if (!container) return;
+    const updateWidth = () => {
+      const nextWidth = Math.round(container.getBoundingClientRect().width);
+      setPaneWidth((current) => (current === nextWidth ? current : nextWidth));
+    };
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+  const shouldUsePlanSidebarSheet =
+    paneRuntime.auxiliaryPanelPresentation === "sheet" ||
+    (paneRuntime.auxiliaryPanelPresentation === "auto" && paneWidth !== null && paneWidth < 720);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -1747,10 +1814,10 @@ function ChatViewContent(props: ChatViewProps) {
           },
         );
         if (routeKind !== "draft" || draftId !== storedDraftSession.draftId) {
-          await navigate({
-            to: "/draft/$draftId",
-            params: buildDraftThreadRouteParams(storedDraftSession.draftId),
-          });
+          await navigateToThreadTarget(
+            { kind: "draft", draftId: storedDraftSession.draftId },
+            "replace",
+          );
         }
         return storedDraftSession.threadId;
       }
@@ -1781,10 +1848,7 @@ function ChatViewContent(props: ChatViewProps) {
         interactionMode: DEFAULT_INTERACTION_MODE,
         ...input,
       });
-      await navigate({
-        to: "/draft/$draftId",
-        params: buildDraftThreadRouteParams(nextDraftId),
-      });
+      await navigateToThreadTarget({ kind: "draft", draftId: nextDraftId }, "replace");
       return nextThreadId;
     },
     [
@@ -1793,7 +1857,7 @@ function ChatViewContent(props: ChatViewProps) {
       getDraftSession,
       getDraftSessionByLogicalProjectKey,
       isServerThread,
-      navigate,
+      navigateToThreadTarget,
       projectGroupingSettings,
       routeKind,
       setDraftThreadContext,
@@ -1813,7 +1877,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    if (!serverThread?.id) return;
+    if (!handlesPaneGlobalActivity || !serverThread?.id) return;
     const threadUpdatedAt = Date.parse(serverThread.updatedAt);
     if (Number.isNaN(threadUpdatedAt)) return;
     const lastVisitedAt = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
@@ -1826,6 +1890,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeThreadLastVisitedAt,
     markThreadVisited,
+    handlesPaneGlobalActivity,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.updatedAt,
@@ -2539,6 +2604,22 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [composerRef],
   );
+  const persistentTerminalRuntime = useMemo<PersistentTerminalPaneRuntime>(
+    () => ({
+      launchContext: activeTerminalLaunchContext ?? null,
+      focusRequestId: terminalFocusRequestId,
+      onAddTerminalContext: addTerminalContextToDraft,
+    }),
+    [activeTerminalLaunchContext, addTerminalContextToDraft, terminalFocusRequestId],
+  );
+  useEffect(() => {
+    if (paneRuntime.ownsPersistentTerminalDrawer) return;
+    paneRuntime.publishPersistentTerminalRuntime?.(persistentTerminalRuntime);
+  }, [
+    paneRuntime.ownsPersistentTerminalDrawer,
+    paneRuntime.publishPersistentTerminalRuntime,
+    persistentTerminalRuntime,
+  ]);
   const setTerminalOpen = useCallback(
     (open: boolean) => {
       if (!activeThreadRef) return;
@@ -3335,9 +3416,9 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(
     () =>
       subscribePreviewAction((action) => {
-        if (action === "toggle-panel") togglePreviewPanel();
+        if (handlesPaneGlobalActivity && action === "toggle-panel") togglePreviewPanel();
       }),
-    [togglePreviewPanel],
+    [handlesPaneGlobalActivity, togglePreviewPanel],
   );
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -3918,13 +3999,14 @@ function ChatViewContent(props: ChatViewProps) {
   const handleOpenParentThread = useCallback(() => {
     const relation = activeThreadShell?.taskRelation;
     if (activeThreadRef === null || relation == null) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(
-        scopeThreadRef(activeThreadRef.environmentId, relation.parentThreadId),
-      ),
-    });
-  }, [activeThreadRef, activeThreadShell?.taskRelation, navigate]);
+    void navigateToThreadTarget(
+      {
+        kind: "server",
+        threadRef: scopeThreadRef(activeThreadRef.environmentId, relation.parentThreadId),
+      },
+      "replace",
+    );
+  }, [activeThreadRef, activeThreadShell?.taskRelation, navigateToThreadTarget]);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
@@ -4284,6 +4366,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadId, terminalUiState.terminalOpen]);
 
   useEffect(() => {
+    if (!handlesPaneGlobalActivity) return;
     if (!activeThreadKey) return;
     const previous = terminalUiOpenByThreadRef.current[activeThreadKey] ?? false;
     const current = Boolean(terminalUiState.terminalOpen);
@@ -4303,14 +4386,15 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     terminalUiOpenByThreadRef.current[activeThreadKey] = current;
-  }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThreadKey, focusComposer, handlesPaneGlobalActivity, terminalUiState.terminalOpen]);
 
   useEffect(() => {
+    if (!handlesPaneGlobalActivity) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
-      const terminalFocusOwner = getTerminalFocusOwner();
+      const terminalFocusOwner = handlesPaneGlobalActivity ? getTerminalFocusOwner() : null;
       if (event.defaultPrevented && terminalFocusOwner === null) {
         return;
       }
@@ -4448,6 +4532,7 @@ function ChatViewContent(props: ChatViewProps) {
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
+    handlesPaneGlobalActivity,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -5351,13 +5436,13 @@ function ChatViewContent(props: ChatViewProps) {
       // Signal that the plan sidebar should open on the new thread when enabled.
       planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
       const navigateResult = await settlePromise(() =>
-        navigate({
-          to: "/$environmentId/$threadId",
-          params: {
-            environmentId: activeThread.environmentId,
-            threadId: nextThreadId,
+        navigateToThreadTarget(
+          {
+            kind: "server",
+            threadRef: scopeThreadRef(activeThread.environmentId, nextThreadId),
           },
-        }),
+          "replace",
+        ),
       );
       failure = navigateResult._tag === "Failure" ? navigateResult : null;
     }
@@ -5402,7 +5487,7 @@ function ChatViewContent(props: ChatViewProps) {
     isConnecting,
     isSendBusy,
     isServerThread,
-    navigate,
+    navigateToThreadTarget,
     resetLocalDispatch,
     runtimeMode,
     startThreadTurn,
@@ -5681,7 +5766,11 @@ function ChatViewContent(props: ChatViewProps) {
   ) : null;
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div
+      ref={chatViewContainerRef}
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      data-thread-pane-presentation={paneRuntime.presentation}
+    >
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -6050,24 +6139,18 @@ function ChatViewContent(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
-            launchContext={
-              mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-            }
-            focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        ))}
+        {paneRuntime.ownsPersistentTerminalDrawer
+          ? mountedTerminalThreadRefs.map(
+              ({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+                <PersistentThreadTerminalDrawer
+                  key={mountedThreadKey}
+                  threadRef={mountedThreadRef}
+                  visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
+                  runtime={mountedThreadKey === activeThreadKey ? persistentTerminalRuntime : null}
+                />
+              ),
+            )
+          : null}
       </div>
 
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
@@ -6137,9 +6220,5 @@ function ChatViewContent(props: ChatViewProps) {
 }
 
 export default function ChatView(props: ChatViewProps) {
-  return (
-    <DiffWorkerPoolProvider>
-      <ChatViewContent {...props} />
-    </DiffWorkerPoolProvider>
-  );
+  return <ChatViewContent {...props} />;
 }

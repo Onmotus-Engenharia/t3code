@@ -34,6 +34,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getFullThreadDiffStat: "orchestration.getFullThreadDiffStat",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -1423,6 +1424,13 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const OrchestrationGetFullThreadDiffStatResult = Schema.Struct({
+  additions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+export type OrchestrationGetFullThreadDiffStatResult =
+  typeof OrchestrationGetFullThreadDiffStatResult.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1435,6 +1443,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  getFullThreadDiffStat: {
+    input: OrchestrationGetFullThreadDiffInput,
+    output: OrchestrationGetFullThreadDiffStatResult,
   },
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import { mergeProviderRateLimits, selectLatestCodexRateLimits } from "./providerRateLimits.ts";
+import {
+  mergeProviderRateLimits,
+  selectCodexUsageWindows,
+  selectLatestCodexRateLimits,
+} from "./providerRateLimits.ts";
 
 describe("mergeProviderRateLimits", () => {
   it("retains missing fields from sparse rolling updates", () => {
@@ -16,6 +20,28 @@ describe("mergeProviderRateLimits", () => {
       primary: { usedPercent: 11, resetsAt: 100, windowDurationMins: 300 },
       secondary: { usedPercent: 20, resetsAt: 200, windowDurationMins: 10_080 },
     });
+  });
+});
+
+describe("selectCodexUsageWindows", () => {
+  it("identifies five-hour and weekly windows regardless of provider order", () => {
+    expect(
+      selectCodexUsageWindows({
+        primary: { usedPercent: 72, windowDurationMins: 10_080 },
+        secondary: { usedPercent: 24, windowDurationMins: 300 },
+      }),
+    ).toEqual({
+      fiveHour: { usedPercent: 24, windowDurationMins: 300 },
+      weekly: { usedPercent: 72, windowDurationMins: 10_080 },
+    });
+  });
+
+  it("omits unavailable and malformed windows", () => {
+    expect(
+      selectCodexUsageWindows({
+        primary: { usedPercent: Number.NaN, windowDurationMins: 300 },
+      }),
+    ).toEqual({ fiveHour: null, weekly: null });
   });
 });
 

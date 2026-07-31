@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
-import ChatView from "../components/ChatView";
+import { ThreadSplitView } from "../components/thread-split/ThreadSplitView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import {
   DraftId,
@@ -10,6 +10,7 @@ import {
 import { SidebarInset } from "../components/ui/sidebar";
 import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { threadSplitStore } from "../threadSplitStore";
 import { useThread, useThreadRefs } from "../state/entities";
 
 function DraftChatThreadRouteView() {
@@ -47,6 +48,12 @@ function DraftChatThreadRouteView() {
       if (cancelled) {
         return;
       }
+      threadSplitStore
+        .getState()
+        .promoteDraftTarget(
+          `draft:${draftId}`,
+          `server:${canonicalThreadRef.environmentId}:${canonicalThreadRef.threadId}`,
+        );
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(canonicalThreadRef),
@@ -57,7 +64,7 @@ function DraftChatThreadRouteView() {
     return () => {
       cancelled = true;
     };
-  }, [canonicalThreadRef, navigate]);
+  }, [canonicalThreadRef, draftId, navigate]);
 
   useEffect(() => {
     if (draftSession || canonicalThreadRef) {
@@ -72,13 +79,7 @@ function DraftChatThreadRouteView() {
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      <ChatView
-        draftId={draftId}
-        environmentId={draftSession.environmentId}
-        threadId={draftSession.threadId}
-        routeKind="draft"
-        forceExpandedMobileComposer
-      />
+      <ThreadSplitView routeTarget={{ kind: "draft", draftId }} forceExpandedMobileComposer />
     </SidebarInset>
   );
 }

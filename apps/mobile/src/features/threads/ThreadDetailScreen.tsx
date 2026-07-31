@@ -46,6 +46,7 @@ import type { TaskTreeContextWindowUsage } from "./contextWindow";
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
   readonly taskTreeContextWindowUsage: TaskTreeContextWindowUsage | null;
+  readonly contextDiffToTurnCount: number | null;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
@@ -430,6 +431,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               threadSyncPhase={threadSyncPhase}
               selectedThread={props.selectedThread}
               taskTreeContextWindowUsage={props.taskTreeContextWindowUsage}
+              contextDiffToTurnCount={props.contextDiffToTurnCount}
               serverConfig={props.serverConfig}
               queueCount={props.selectedThreadQueueCount}
               activeThreadBusy={props.activeThreadBusy}

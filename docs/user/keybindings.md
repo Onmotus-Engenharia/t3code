@@ -33,7 +33,9 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
-  { "key": "mod+o", "command": "editor.openFavorite" }
+  { "key": "mod+o", "command": "editor.openFavorite" },
+  { "key": "mod+alt+[", "command": "splitView.focusPrevious", "when": "splitViewActive" },
+  { "key": "mod+alt+]", "command": "splitView.focusNext", "when": "splitViewActive" }
 ]
 ```
 
@@ -67,7 +69,19 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `editor.openFavorite`: open current project/worktree in the last-used editor
+- `splitView.focusPrevious`: focus the previous pane in the active split view
+- `splitView.focusNext`: focus the next pane in the active split view
+- `splitView.removeFocusedPane`: remove the focused pane from its split view
+- `splitView.closeGroup`: close the active split view without closing its threads
+- `splitView.toggleTaskTree`: open or close the focused thread's task-tree split view
+- `splitView.layoutAuto`: use automatic layout for the active split view
+- `splitView.layoutColumns`: arrange the active split view side by side
+- `splitView.layoutRows`: arrange the active split view top and bottom
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
+
+Only `splitView.focusPrevious` and `splitView.focusNext` have default shortcuts. The other
+split-view commands are available to assign in Settings. They remain listed when connected to an
+older remote server that does not include split-view defaults.
 
 ### Key Syntax
 
@@ -94,6 +108,7 @@ Currently available context keys:
 - `terminalOpen`
 - `previewFocus`
 - `previewOpen`
+- `splitViewActive`
 
 Supported operators:
 

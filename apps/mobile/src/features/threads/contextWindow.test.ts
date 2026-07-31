@@ -2,6 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildContextInfoActions,
   deriveTaskTreeContextWindowUsage,
   formatContextUsage,
   formatContextWindowTokens,
@@ -100,5 +101,44 @@ describe("mobile context window", () => {
     expect(formatContextUsage({ usedTokens: 14_000, maxTokens: 258_000 })).toBe("14k / 258k");
     expect(formatContextUsage({ usedTokens: 14_000 })).toBe("14k used");
     expect(formatContextUsage({ usedTokens: 14_000, maxTokens: 0 })).toBe("14k used");
+  });
+
+  it("builds context details with full worktree and Codex account usage", () => {
+    expect(
+      buildContextInfoActions({
+        currentUsage: { usedTokens: 14_000, totalProcessedTokens: 20_000, maxTokens: 258_000 },
+        taskTreeUsage: {
+          taskCount: 3,
+          measuredTaskCount: 3,
+          usedTokens: 42_000,
+          totalProcessedTokens: 80_000,
+          maxTokens: 774_000,
+          usedPercentage: 5.4,
+        },
+        fullDiffStat: { additions: 1_234, deletions: 56 },
+        codexRateLimits: {
+          primary: { usedPercent: 72.4, windowDurationMins: 10_080 },
+          secondary: { usedPercent: 24.6, windowDurationMins: 300 },
+        },
+      }),
+    ).toEqual([
+      {
+        id: "context-current",
+        title: "Current thread",
+        subtitle: "14k / 258k · 20k processed",
+      },
+      {
+        id: "context-all-tasks",
+        title: "All tasks (3)",
+        subtitle: "42k / 774k · 80k processed",
+      },
+      {
+        id: "context-full-diff",
+        title: "Full task tree",
+        subtitle: "+1234 / -56 lines",
+      },
+      { id: "context-codex-5h", title: "Codex 5h", subtitle: "25% used" },
+      { id: "context-codex-weekly", title: "Codex weekly", subtitle: "72% used" },
+    ]);
   });
 });

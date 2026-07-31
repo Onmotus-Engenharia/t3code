@@ -6,6 +6,7 @@ import {
   ContainerIcon,
   FolderPlusIcon,
   Globe2Icon,
+  GripVerticalIcon,
   LoaderIcon,
   PinIcon,
   SearchIcon,
@@ -26,16 +27,27 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
-import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  memo,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
+  DragOverlay,
   type DragCancelEvent,
   type CollisionDetection,
   PointerSensor,
   type DragStartEvent,
   closestCorners,
   pointerWithin,
+  useDraggable,
+  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -64,7 +76,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
+import { useLocation, useParams } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -118,10 +130,19 @@ import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import {
-  buildThreadRouteParams,
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
+  splitKeyToThreadRouteTarget,
+  threadRouteTargetToSplitKey,
 } from "../threadRoutes";
+import { useThreadNavigation } from "../threadSplitNavigation";
+import {
+  getAvailableTaskDescendants,
+  getThreadSplitGroupForTarget,
+  threadSplitStore,
+  type ThreadSplitCatalogThread,
+  type ThreadSplitTargetKey,
+} from "../threadSplitStore";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
@@ -207,6 +228,19 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import {
+  ThreadSplitIndicator,
+  ThreadSplitShelf,
+  type ThreadSplitShelfGroup,
+} from "./thread-split/ThreadSplitShelf";
+import {
+  applyThreadSplitDrop,
+  isThreadSplitDragData,
+  resolveThreadSplitDrop,
+  THREAD_SPLIT_DRAG_ACTIVATION_DISTANCE,
+  threadSplitDragData,
+  threadSplitTargetDropData,
+} from "./thread-split/threadSplitDrag";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -228,6 +262,31 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
 };
 const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
   "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
+
+function useThreadSplitState() {
+  return useSyncExternalStore(
+    threadSplitStore.subscribe,
+    threadSplitStore.getState,
+    threadSplitStore.getInitialState,
+  );
+}
+
+function serverSplitTargetKey(threadRef: ScopedThreadRef): ThreadSplitTargetKey {
+  return `server:${scopedThreadKey(threadRef)}`;
+}
+
+function buildSplitTaskCatalog(
+  threads: readonly SidebarThreadSummary[],
+): ThreadSplitCatalogThread[] {
+  return threads.map((thread, treeOrder) => ({
+    targetKey: serverSplitTargetKey(scopeThreadRef(thread.environmentId, thread.id)),
+    rootThreadKey: thread.taskRelation
+      ? scopedThreadKey(scopeThreadRef(thread.environmentId, thread.taskRelation.rootThreadId))
+      : null,
+    updatedAt: thread.updatedAt,
+    treeOrder,
+  }));
+}
 
 function SidebarThreadDetailPrewarmer({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   useEnvironmentThread(threadRef.environmentId, threadRef.threadId);
@@ -369,6 +428,29 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const splitTargetKey = serverSplitTargetKey(threadRef);
+  const splitState = useThreadSplitState();
+  const splitGroup = getThreadSplitGroupForTarget(splitState, splitTargetKey);
+  const {
+    attributes: splitDragAttributes,
+    listeners: splitDragListeners,
+    setNodeRef: setSplitDragNodeRef,
+  } = useDraggable({
+    id: `sidebar-v1-split-drag:${splitTargetKey}`,
+    data: threadSplitDragData(splitTargetKey, thread.title),
+    disabled: renamingThreadKey === threadKey,
+  });
+  const { isOver: isSplitDropOver, setNodeRef: setSplitDropNodeRef } = useDroppable({
+    id: `sidebar-v1-split-drop:${splitTargetKey}`,
+    data: threadSplitTargetDropData(splitTargetKey),
+  });
+  const setSplitRowNodeRef = useCallback(
+    (node: HTMLLIElement | null) => {
+      setSplitDragNodeRef(node);
+      setSplitDropNodeRef(node);
+    },
+    [setSplitDragNodeRef, setSplitDropNodeRef],
+  );
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -660,6 +742,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
 
   return (
     <SidebarMenuSubItem
+      ref={setSplitRowNodeRef}
       className="w-full"
       data-thread-item
       onMouseLeave={handleMouseLeave}
@@ -673,13 +756,22 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} relative isolate`}
+        })} relative isolate ${isSplitDropOver ? "ring-1 ring-primary bg-primary/10" : ""}`}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+          <span
+            aria-label={`Drag ${thread.title} into a split view`}
+            className="inline-flex size-4 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground/45 active:cursor-grabbing"
+            data-thread-selection-safe
+            {...splitDragAttributes}
+            {...splitDragListeners}
+          >
+            <GripVerticalIcon aria-hidden className="size-3" />
+          </span>
           {prStatus && (
             <Tooltip>
               <TooltipTrigger
@@ -707,6 +799,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               className="size-3.5 shrink-0 text-muted-foreground/70"
             />
           ) : null}
+          {splitGroup ? <ThreadSplitIndicator /> : null}
           {thread.pinned ? (
             <PinIcon
               aria-label="Pinned thread"
@@ -1132,7 +1225,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const sidebarThreadPreviewCount = useClientSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
   );
-  const router = useRouter();
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const threadNavigation = useThreadNavigation(routeTarget);
   const { isMobile, setOpenMobile } = useSidebar();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
@@ -1182,6 +1279,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
+  const allSidebarThreads = useThreadShells();
   const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
   const sidebarThreadByKey = useMemo(
     () =>
@@ -1712,12 +1810,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (isMobile) {
         setOpenMobile(false);
       }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      void threadNavigation.openTarget(
+        { kind: "server", threadRef },
+        { history: "push", disposition: "activate-existing-group" },
+      );
     },
-    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+    [clearSelection, isMobile, setOpenMobile, setSelectionAnchor, threadNavigation],
   );
 
   const handleThreadClick = useCallback(
@@ -1758,18 +1856,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (isMobile) {
         setOpenMobile(false);
       }
-      void router.navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      void threadNavigation.openTarget(
+        { kind: "server", threadRef },
+        { history: "push", disposition: "activate-existing-group" },
+      );
     },
     [
       clearSelection,
       isMobile,
       rangeSelectTo,
-      router,
       setOpenMobile,
       setSelectionAnchor,
+      threadNavigation,
       toggleThreadSelection,
     ],
   );
@@ -1781,20 +1879,59 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      const selectedThreadEntries = threadKeys.flatMap((threadKey) => {
-        const threadRef = parseScopedThreadKey(threadKey);
-        const thread = threadRef ? readThreadShell(threadRef) : null;
-        return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
-      });
+      const renderedOrder = new Map(
+        allSidebarThreads.map((thread, index) => [
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          index,
+        ]),
+      );
+      const selectedThreadEntries = threadKeys
+        .flatMap((threadKey) => {
+          const threadRef = parseScopedThreadKey(threadKey);
+          const thread = threadRef ? readThreadShell(threadRef) : null;
+          return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
+        })
+        .sort(
+          (left, right) =>
+            (renderedOrder.get(left.threadKey) ?? Number.MAX_SAFE_INTEGER) -
+            (renderedOrder.get(right.threadKey) ?? Number.MAX_SAFE_INTEGER),
+        );
       const hasRunningThread = selectedThreadEntries.some(
         ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
       );
 
       const clicked = await api.contextMenu.show(
-        buildMultiSelectThreadContextMenuItems({ count, hasRunningThread }),
+        [
+          {
+            id: "open-in-split",
+            label: `Open in split view (${count})`,
+            disabled: selectedThreadEntries.length < 2 || selectedThreadEntries.length > 12,
+          },
+          ...buildMultiSelectThreadContextMenuItems({ count, hasRunningThread }),
+        ],
         position,
       );
 
+      if (clicked === "open-in-split") {
+        const targetKeys = selectedThreadEntries.map(({ threadRef }) =>
+          serverSplitTargetKey(threadRef),
+        );
+        const firstTargetKey = targetKeys[0];
+        if (!firstTargetKey) return;
+        const groupId = threadSplitStore.getState().openTargets(targetKeys, {
+          mode: "new-group",
+          focusTargetKey: firstTargetKey,
+        });
+        const first = selectedThreadEntries[0];
+        if (groupId && first) {
+          clearSelection();
+          await threadNavigation.openTarget(
+            { kind: "server", threadRef: first.threadRef },
+            { history: "push", disposition: "activate-existing-group" },
+          );
+        }
+        return;
+      }
       if (clicked === "mark-unread") {
         for (const { threadKey, thread } of selectedThreadEntries) {
           markThreadUnread(threadKey, thread.latestTurn?.completedAt);
@@ -1880,9 +2017,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       appSettingsConfirmThreadArchive,
       appSettingsConfirmThreadDelete,
+      allSidebarThreads,
       archiveThread,
       clearSelection,
       deleteThread,
+      threadNavigation,
       markThreadUnread,
       removeFromSelection,
     ],
@@ -2130,8 +2269,43 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+      const targetKey = serverSplitTargetKey(threadRef);
+      const splitState = threadSplitStore.getState();
+      const owner = getThreadSplitGroupForTarget(splitState, targetKey);
+      const focusedTarget = threadNavigation.getFocusedTarget();
+      const focusedTargetKey = focusedTarget ? threadRouteTargetToSplitKey(focusedTarget) : null;
+      const rootThreadId = thread.taskRelation?.rootThreadId ?? thread.id;
+      const rootRef = scopeThreadRef(thread.environmentId, rootThreadId);
+      const rootTargetKey = serverSplitTargetKey(rootRef);
+      const taskCatalog = buildSplitTaskCatalog(allSidebarThreads);
+      const descendants = taskCatalog.filter(
+        (entry) => entry.rootThreadKey === scopedThreadKey(rootRef),
+      );
+      const existingTaskGroup = Object.values(splitState.groups).find(
+        (group) => group.taskTreeBinding?.rootThreadKey === scopedThreadKey(rootRef),
+      );
+      const splitItems: ContextMenuItem<string>[] = owner
+        ? [
+            { id: "focus-in-split", label: "Focus in split view" },
+            { id: "remove-from-split", label: "Remove from split view" },
+          ]
+        : [
+            ...(splitState.activeGroupId
+              ? [{ id: "open-in-current-split", label: "Open in current split view" }]
+              : []),
+            ...(focusedTargetKey && focusedTargetKey !== targetKey
+              ? [{ id: "start-split", label: "Start split view with current thread" }]
+              : []),
+          ];
+      if (thread.taskRelation || descendants.length > 0) {
+        splitItems.push({
+          id: existingTaskGroup ? "open-task-split" : "split-task-tree",
+          label: existingTaskGroup ? "Open task split view" : "Split task tree",
+        });
+      }
       const clicked = await api.contextMenu.show(
         [
+          ...splitItems,
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
@@ -2145,6 +2319,57 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         position,
       );
 
+      if (clicked === "focus-in-split") {
+        await threadNavigation.openTarget(
+          { kind: "server", threadRef },
+          { history: "push", disposition: "activate-existing-group" },
+        );
+        return;
+      }
+      if (clicked === "remove-from-split") {
+        splitState.removeTarget(targetKey);
+        return;
+      }
+      if (clicked === "open-in-current-split" && splitState.activeGroupId) {
+        if (splitState.groups[splitState.activeGroupId]?.targetKeys.length === 12) {
+          toastManager.add({
+            type: "error",
+            title: "Split view is full",
+            description: "Split views support up to 12 panes.",
+          });
+          return;
+        }
+        splitState.openTargets([targetKey], {
+          groupId: splitState.activeGroupId,
+          mode: "add",
+          focusTargetKey: targetKey,
+        });
+        await threadNavigation.openTarget({ kind: "server", threadRef }, { history: "push" });
+        return;
+      }
+      if (clicked === "start-split" && focusedTargetKey) {
+        splitState.openTargets([focusedTargetKey, targetKey], {
+          mode: "new-group",
+          focusTargetKey: targetKey,
+        });
+        await threadNavigation.openTarget({ kind: "server", threadRef }, { history: "push" });
+        return;
+      }
+      if (clicked === "split-task-tree" || clicked === "open-task-split") {
+        const result = splitState.openTaskTree(rootTargetKey, descendants);
+        if (result.omittedCount > 0) {
+          toastManager.add({
+            type: "info",
+            title: "Task split view limited to 12 panes",
+            description: `${result.omittedCount} descendant${result.omittedCount === 1 ? "" : "s"} remain available to add.`,
+          });
+        }
+        await threadNavigation.openTarget(
+          { kind: "server", threadRef: rootRef },
+          { history: "push", disposition: "activate-existing-group" },
+        );
+        return;
+      }
       if (clicked === "new-thread-on-branch") {
         // Explicit branch carry-over: reuse the thread's worktree when it
         // has one, otherwise its branch on the local checkout.
@@ -2240,6 +2465,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
     [
       appSettingsConfirmThreadDelete,
+      allSidebarThreads,
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
@@ -2249,6 +2475,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       project.workspaceRoot,
       setThreadPin,
       startThreadRename,
+      threadNavigation,
     ],
   );
 
@@ -2858,99 +3085,316 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
+  const splitState = useThreadSplitState();
+  const splitThreads = useThreadShells();
+  const splitCatalog = useMemo(() => buildSplitTaskCatalog(splitThreads), [splitThreads]);
+  const splitRouteTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const splitNavigation = useThreadNavigation(splitRouteTarget);
+  const [splitDragTitle, setSplitDragTitle] = useState<string | null>(null);
+  const splitGroups = useMemo<ThreadSplitShelfGroup[]>(
+    () =>
+      splitState.groupOrder.flatMap((groupId) => {
+        const group = splitState.groups[groupId];
+        return group
+          ? [
+              {
+                ...group,
+                availableDescendantKeys: getAvailableTaskDescendants(
+                  splitState,
+                  groupId,
+                  splitCatalog,
+                ).map((entry) => entry.targetKey),
+              },
+            ]
+          : [];
+      }),
+    [splitCatalog, splitState],
+  );
+  const resolveSplitShelfTarget = useCallback((targetKey: ThreadSplitTargetKey) => {
+    const target = splitKeyToThreadRouteTarget(targetKey);
+    if (!target) return { title: "Unavailable thread", statusLabel: "Unavailable" };
+    if (target.kind === "draft") {
+      return {
+        title: "New thread",
+        statusLabel: "Draft",
+        icon: <ThreadSplitIndicator />,
+      };
+    }
+    const thread = readThreadShell(target.threadRef);
+    return {
+      title: thread?.title ?? "Unavailable thread",
+      statusLabel: thread?.session?.status ?? "Thread",
+      icon: <ThreadSplitIndicator />,
+    };
+  }, []);
+  const focusSplitTarget = useCallback(
+    (targetKey: ThreadSplitTargetKey) => {
+      const target = splitKeyToThreadRouteTarget(targetKey);
+      if (!target) return;
+      void splitNavigation.openTarget(target, {
+        history: "push",
+        disposition: "activate-existing-group",
+      });
+    },
+    [splitNavigation],
+  );
+  const removeSplitTarget = useCallback(
+    (targetKey: ThreadSplitTargetKey) => {
+      const state = threadSplitStore.getState();
+      const group = getThreadSplitGroupForTarget(state, targetKey);
+      state.removeTarget(targetKey);
+      if (!group || group.focusedTargetKey !== targetKey) return;
+      const survivor = group.targetKeys.find((key) => key !== targetKey);
+      if (survivor) {
+        const target = splitKeyToThreadRouteTarget(survivor);
+        if (!target) return;
+        void splitNavigation.openTarget(target, {
+          history: "push",
+          disposition: "standalone",
+        });
+      }
+    },
+    [splitNavigation],
+  );
+  const closeSplitGroup = useCallback(
+    (groupId: string) => {
+      const state = threadSplitStore.getState();
+      const focused = state.groups[groupId]?.focusedTargetKey;
+      state.closeGroup(groupId);
+      if (focused) {
+        const target = splitKeyToThreadRouteTarget(focused);
+        if (!target) return;
+        void splitNavigation.openTarget(target, {
+          history: "push",
+          disposition: "standalone",
+        });
+      }
+    },
+    [splitNavigation],
+  );
+  const addSplitTargetsFromMenu = useCallback(
+    async (groupId: string, candidates: readonly ThreadSplitTargetKey[]) => {
+      const api = readLocalApi();
+      if (!api || candidates.length === 0) return;
+      if (threadSplitStore.getState().groups[groupId]?.targetKeys.length === 12) {
+        toastManager.add({
+          type: "error",
+          title: "Split view is full",
+          description: "Split views support up to 12 panes.",
+        });
+        return;
+      }
+      const clicked = await api.contextMenu.show(
+        candidates.map((targetKey) => ({
+          id: targetKey,
+          label: resolveSplitShelfTarget(targetKey).title,
+        })),
+      );
+      if (!clicked) return;
+      const target = splitKeyToThreadRouteTarget(clicked);
+      if (!target) return;
+      threadSplitStore.getState().openTargets([clicked], {
+        groupId,
+        mode: "add",
+        focusTargetKey: clicked,
+      });
+      await splitNavigation.openTarget(target, { history: "push" });
+    },
+    [resolveSplitShelfTarget, splitNavigation],
+  );
+  const handleCombinedDragStart = useCallback(
+    (event: DragStartEvent) => {
+      if (isThreadSplitDragData(event.active.data.current)) {
+        setSplitDragTitle(event.active.data.current.title);
+        return;
+      }
+      handleProjectDragStart(event);
+    },
+    [handleProjectDragStart],
+  );
+  const handleCombinedDragCancel = useCallback(
+    (event: DragCancelEvent) => {
+      if (splitDragTitle !== null) {
+        setSplitDragTitle(null);
+        return;
+      }
+      handleProjectDragCancel(event);
+    },
+    [handleProjectDragCancel, splitDragTitle],
+  );
+  const handleCombinedDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      if (isThreadSplitDragData(event.active.data.current)) {
+        setSplitDragTitle(null);
+        const result = resolveThreadSplitDrop(
+          threadSplitStore.getState(),
+          event.active.data.current,
+          event.over?.data.current,
+        );
+        if (!result.accepted) {
+          if (result.reason === "full" && result.message) {
+            toastManager.add({
+              type: "error",
+              title: "Split view is full",
+              description: result.message,
+            });
+          }
+          return;
+        }
+        applyThreadSplitDrop(result, threadSplitStore.getState());
+        const target = splitKeyToThreadRouteTarget(event.active.data.current.targetKey);
+        if (!target) return;
+        void splitNavigation.openTarget(target, {
+          history: "push",
+          disposition: "activate-existing-group",
+        });
+        return;
+      }
+      handleProjectDragEnd(event);
+    },
+    [handleProjectDragEnd, splitNavigation],
+  );
+  const combinedCollisionDetection = useCallback<CollisionDetection>(
+    (args) => {
+      const threadDrag = isThreadSplitDragData(args.active.data.current);
+      return projectCollisionDetection({
+        ...args,
+        droppableContainers: args.droppableContainers.filter((container) =>
+          threadDrag
+            ? container.data.current?.type === "thread-split-drop"
+            : container.data.current?.sortable !== undefined,
+        ),
+      });
+    },
+    [projectCollisionDetection],
+  );
 
   return (
-    <SidebarContent
-      className="gap-0"
-      fixedHeader={
-        <SidebarGroup className="px-2 pt-2 pb-1">
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <CommandDialogTrigger
-                render={
-                  <SidebarMenuButton
-                    className="focus-visible:ring-0"
-                    data-testid="command-palette-trigger"
-                  />
-                }
-              >
-                <SearchIcon />
-                <span className="flex-1 truncate">Search</span>
-                {commandPaletteShortcutLabel ? (
-                  <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
-                    {commandPaletteShortcutLabel}
-                  </Kbd>
-                ) : null}
-              </CommandDialogTrigger>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroup>
+    <DndContext
+      sensors={projectDnDSensors}
+      collisionDetection={combinedCollisionDetection}
+      modifiers={
+        splitDragTitle === null ? [restrictToVerticalAxis, restrictToFirstScrollableAncestor] : []
       }
+      onDragStart={handleCombinedDragStart}
+      onDragEnd={handleCombinedDragEnd}
+      onDragCancel={handleCombinedDragCancel}
     >
-      {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
-        <SidebarGroup className="px-2 pt-2 pb-0">
-          <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
-            <TriangleAlertIcon />
-            <AlertTitle>Intel build on Apple Silicon</AlertTitle>
-            <AlertDescription>{arm64IntelBuildWarningDescription}</AlertDescription>
-            {desktopUpdateButtonAction !== "none" ? (
-              <AlertAction>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={desktopUpdateButtonDisabled}
-                  onClick={handleDesktopUpdateButtonClick}
+      <SidebarContent
+        className="gap-0"
+        fixedHeader={
+          <SidebarGroup className="px-2 pt-2 pb-1">
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <CommandDialogTrigger
+                  render={
+                    <SidebarMenuButton
+                      className="focus-visible:ring-0"
+                      data-testid="command-palette-trigger"
+                    />
+                  }
                 >
-                  {desktopUpdateButtonAction === "download"
-                    ? "Download ARM build"
-                    : "Install ARM build"}
-                </Button>
-              </AlertAction>
-            ) : null}
-          </Alert>
-        </SidebarGroup>
-      ) : null}
-      <LocalSecondaryStatus />
-      <SidebarGroup className="px-2 py-2">
-        <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-          <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
-          <div className="flex items-center gap-1">
-            <ProjectSortMenu
-              projectSortOrder={projectSortOrder}
-              threadSortOrder={threadSortOrder}
-              threadPreviewCount={threadPreviewCount}
-              onProjectSortOrderChange={handleProjectSortOrderChange}
-              onThreadSortOrderChange={handleThreadSortOrderChange}
-              onThreadPreviewCountChange={handleThreadPreviewCountChange}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label="Add project"
-                    data-testid="sidebar-add-project-trigger"
-                    className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={openAddProject}
-                  />
-                }
-              >
-                <FolderPlusIcon className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipPopup side="right">Add project</TooltipPopup>
-            </Tooltip>
+                  <SearchIcon />
+                  <span className="flex-1 truncate">Search</span>
+                  {commandPaletteShortcutLabel ? (
+                    <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+                      {commandPaletteShortcutLabel}
+                    </Kbd>
+                  ) : null}
+                </CommandDialogTrigger>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
+        }
+      >
+        {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
+          <SidebarGroup className="px-2 pt-2 pb-0">
+            <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
+              <TriangleAlertIcon />
+              <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+              <AlertDescription>{arm64IntelBuildWarningDescription}</AlertDescription>
+              {desktopUpdateButtonAction !== "none" ? (
+                <AlertAction>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={desktopUpdateButtonDisabled}
+                    onClick={handleDesktopUpdateButtonClick}
+                  >
+                    {desktopUpdateButtonAction === "download"
+                      ? "Download ARM build"
+                      : "Install ARM build"}
+                  </Button>
+                </AlertAction>
+              ) : null}
+            </Alert>
+          </SidebarGroup>
+        ) : null}
+        <LocalSecondaryStatus />
+        <ThreadSplitShelf
+          groups={splitGroups}
+          activeGroupId={splitState.activeGroupId}
+          resolveTarget={resolveSplitShelfTarget}
+          onFocusTarget={focusSplitTarget}
+          onRemoveTarget={removeSplitTarget}
+          onSetLayout={(groupId, layoutMode) =>
+            threadSplitStore.getState().configureGroup(groupId, { layoutMode })
+          }
+          onCloseGroup={closeSplitGroup}
+          onAddThreads={(groupId) => {
+            const grouped = new Set(
+              Object.values(threadSplitStore.getState().groups).flatMap(
+                (group) => group.targetKeys,
+              ),
+            );
+            void addSplitTargetsFromMenu(
+              groupId,
+              splitThreads
+                .map((thread) =>
+                  serverSplitTargetKey(scopeThreadRef(thread.environmentId, thread.id)),
+                )
+                .filter((targetKey) => !grouped.has(targetKey)),
+            );
+          }}
+          onAddDescendants={(groupId, availableTargetKeys) => {
+            void addSplitTargetsFromMenu(groupId, availableTargetKeys);
+          }}
+        />
+        <SidebarGroup className="px-2 py-2">
+          <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
+            <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
+            <div className="flex items-center gap-1">
+              <ProjectSortMenu
+                projectSortOrder={projectSortOrder}
+                threadSortOrder={threadSortOrder}
+                threadPreviewCount={threadPreviewCount}
+                onProjectSortOrderChange={handleProjectSortOrderChange}
+                onThreadSortOrderChange={handleThreadSortOrderChange}
+                onThreadPreviewCountChange={handleThreadPreviewCountChange}
+              />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Add project"
+                      data-testid="sidebar-add-project-trigger"
+                      className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={openAddProject}
+                    />
+                  }
+                >
+                  <FolderPlusIcon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="right">Add project</TooltipPopup>
+              </Tooltip>
+            </div>
           </div>
-        </div>
 
-        {isManualProjectSorting ? (
-          <DndContext
-            sensors={projectDnDSensors}
-            collisionDetection={projectCollisionDetection}
-            modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-            onDragStart={handleProjectDragStart}
-            onDragEnd={handleProjectDragEnd}
-            onDragCancel={handleProjectDragCancel}
-          >
+          {isManualProjectSorting ? (
             <SidebarMenu>
               <SortableContext
                 items={sortedProjects.map((project) => project.projectKey)}
@@ -2986,42 +3430,49 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 ))}
               </SortableContext>
             </SidebarMenu>
-          </DndContext>
-        ) : (
-          <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-            {sortedProjects.map((project) => (
-              <SidebarProjectListRow
-                key={project.projectKey}
-                project={project}
-                isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                activeRouteThreadKey={
-                  activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                }
-                newThreadShortcutLabel={newThreadShortcutLabel}
-                handleNewThread={handleNewThread}
-                archiveThread={archiveThread}
-                deleteThread={deleteThread}
-                threadJumpLabelByKey={threadJumpLabelByKey}
-                attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                expandThreadListForProject={expandThreadListForProject}
-                collapseThreadListForProject={collapseThreadListForProject}
-                dragInProgressRef={dragInProgressRef}
-                suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-                isManualProjectSorting={isManualProjectSorting}
-                dragHandleProps={null}
-              />
-            ))}
-          </SidebarMenu>
-        )}
+          ) : (
+            <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+              {sortedProjects.map((project) => (
+                <SidebarProjectListRow
+                  key={project.projectKey}
+                  project={project}
+                  isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
+                  activeRouteThreadKey={
+                    activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                  }
+                  newThreadShortcutLabel={newThreadShortcutLabel}
+                  handleNewThread={handleNewThread}
+                  archiveThread={archiveThread}
+                  deleteThread={deleteThread}
+                  threadJumpLabelByKey={threadJumpLabelByKey}
+                  attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+                  expandThreadListForProject={expandThreadListForProject}
+                  collapseThreadListForProject={collapseThreadListForProject}
+                  dragInProgressRef={dragInProgressRef}
+                  suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+                  suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+                  isManualProjectSorting={isManualProjectSorting}
+                  dragHandleProps={null}
+                />
+              ))}
+            </SidebarMenu>
+          )}
 
-        {projectsLength === 0 && (
-          <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-            No projects yet
+          {projectsLength === 0 && (
+            <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+              No projects yet
+            </div>
+          )}
+        </SidebarGroup>
+      </SidebarContent>
+      <DragOverlay>
+        {splitDragTitle ? (
+          <div className="max-w-64 truncate rounded-md border bg-popover px-2 py-1.5 text-xs shadow-lg">
+            {splitDragTitle}
           </div>
-        )}
-      </SidebarGroup>
-    </SidebarContent>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 });
 
@@ -3031,7 +3482,6 @@ export default function Sidebar() {
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
-  const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
@@ -3046,12 +3496,14 @@ export default function Sidebar() {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
+  const threadNavigation = useThreadNavigation(routeTarget);
+  const focusedRouteTarget = threadNavigation.getFocusedTarget();
   const routeDraftThread = useComposerDraftStore((store) =>
-    routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
+    focusedRouteTarget?.kind === "draft" ? store.getDraftSession(focusedRouteTarget.draftId) : null,
   );
   const routeThreadRef = useMemo(
-    () => resolveActiveThreadRouteRef(routeTarget, routeDraftThread),
-    [routeDraftThread, routeTarget],
+    () => resolveActiveThreadRouteRef(focusedRouteTarget, routeDraftThread),
+    [focusedRouteTarget, routeDraftThread],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
@@ -3223,17 +3675,17 @@ export default function Sidebar() {
       if (isMobile) {
         setOpenMobile(false);
       }
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
+      void threadNavigation.openTarget(
+        { kind: "server", threadRef },
+        { history: "push", disposition: "activate-existing-group" },
+      );
     },
-    [clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],
+    [clearSelection, isMobile, setOpenMobile, setSelectionAnchor, threadNavigation],
   );
 
   const projectDnDSensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
+      activationConstraint: { distance: THREAD_SPLIT_DRAG_ACTIVATION_DISTANCE },
     }),
   );
   const projectCollisionDetection = useCallback<CollisionDetection>((args) => {

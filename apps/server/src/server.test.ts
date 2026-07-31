@@ -5662,7 +5662,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 threadId: ThreadId.make("thread-1"),
                 fromTurnCount: 0,
                 toTurnCount: 1,
-                diff: "full-diff",
+                diff: "--- a/file.ts\n+++ b/file.ts\n-old\n+new\n+added",
               }),
           },
         },
@@ -5700,7 +5700,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
-      assert.equal(fullDiffResult.diff, "full-diff");
+      assert.equal(fullDiffResult.diff, "--- a/file.ts\n+++ b/file.ts\n-old\n+new\n+added");
+
+      const fullDiffStatResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.getFullThreadDiffStat]({
+            threadId: ThreadId.make("thread-1"),
+            toTurnCount: 1,
+          }),
+        ),
+      );
+      assert.deepEqual(fullDiffStatResult, { additions: 2, deletions: 1 });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

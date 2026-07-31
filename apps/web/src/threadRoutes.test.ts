@@ -10,6 +10,8 @@ import {
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
+  splitKeyToThreadRouteTarget,
+  threadRouteTargetToSplitKey,
 } from "./threadRoutes";
 
 describe("threadRoutes", () => {
@@ -65,6 +67,20 @@ describe("threadRoutes", () => {
       kind: "draft",
       draftId: "draft-1",
     });
+  });
+
+  it("converts route targets to stable split keys and back", () => {
+    const server = resolveThreadRouteTarget({
+      environmentId: "env-1",
+      threadId: "thread-1",
+    })!;
+    const draft = resolveThreadRouteTarget({ draftId: "draft-1" })!;
+
+    expect(threadRouteTargetToSplitKey(server)).toBe("server:env-1:thread-1");
+    expect(threadRouteTargetToSplitKey(draft)).toBe("draft:draft-1");
+    expect(splitKeyToThreadRouteTarget("server:env-1:thread-1")).toEqual(server);
+    expect(splitKeyToThreadRouteTarget("draft:draft-1")).toEqual(draft);
+    expect(splitKeyToThreadRouteTarget("server:malformed" as never)).toBeNull();
   });
 
   it("resolves the backing thread while a draft route is being promoted", () => {

@@ -21,6 +21,7 @@ import {
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { selectLatestCodexRateLimits } from "@t3tools/shared/providerRateLimits";
 import {
   memo,
   type ReactNode,
@@ -106,6 +107,9 @@ import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
+import { orchestrationEnvironment } from "~/state/orchestration";
+import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
 import { Separator } from "../ui/separator";
 
 function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
@@ -410,6 +414,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
   taskTreeContextWindowUsage: TaskTreeContextWindowUsage | null;
   activeThreadProviderDisplayName: string | null;
+  fullDiffStat: { readonly additions: number; readonly deletions: number } | null;
+  codexRateLimits: ReturnType<typeof selectLatestCodexRateLimits>;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -437,6 +443,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           usage={props.activeContextWindow}
           taskTreeUsage={props.taskTreeContextWindowUsage}
           providerDisplayName={props.activeThreadProviderDisplayName}
+          fullDiffStat={props.fullDiffStat}
+          codexRateLimits={props.codexRateLimits}
         />
       ) : null}
       {props.isPreparingWorktree ? (
@@ -943,6 +951,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activeContextWindow = useMemo(
     () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
     [activeThreadActivities],
+  );
+  const latestCheckpointTurnCount =
+    activeThread?.checkpoints.reduce(
+      (latest, checkpoint) => Math.max(latest, checkpoint.checkpointTurnCount),
+      0,
+    ) ?? null;
+  const fullDiffStat = useEnvironmentQuery(
+    activeContextWindow !== null && activeThreadId !== null && latestCheckpointTurnCount !== null
+      ? orchestrationEnvironment.fullThreadDiffStat({
+          environmentId,
+          input: {
+            threadId: activeThreadId,
+            toTurnCount: latestCheckpointTurnCount,
+            ignoreWhitespace: false,
+          },
+        })
+      : null,
+  ).data;
+  const providerRateLimitSnapshots = useEnvironmentQuery(
+    activeContextWindow && selectedProvider === "codex"
+      ? serverEnvironment.providerRateLimits({
+          environmentId,
+          input: {},
+        })
+      : null,
+  ).data;
+  const activeCodexRateLimits = useMemo(
+    () =>
+      selectedProvider === "codex"
+        ? selectLatestCodexRateLimits(
+            providerRateLimitSnapshots ?? [],
+            new Set([selectedInstanceId]),
+          )
+        : null,
+    [providerRateLimitSnapshots, selectedInstanceId, selectedProvider],
   );
   const activeThreadProviderDisplayName = useMemo(() => {
     if (!activeThreadModelSelection) return null;
@@ -3139,6 +3182,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   activeContextWindow={activeContextWindow}
                   taskTreeContextWindowUsage={taskTreeContextWindowUsage}
                   activeThreadProviderDisplayName={activeThreadProviderDisplayName}
+                  fullDiffStat={fullDiffStat}
+                  codexRateLimits={activeCodexRateLimits}
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}

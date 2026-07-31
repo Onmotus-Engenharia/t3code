@@ -5,6 +5,10 @@ import type {
   ProviderRateLimitsSnapshot,
 } from "@t3tools/contracts";
 
+export type AvailableProviderRateLimitWindow = ProviderRateLimitWindow & {
+  readonly usedPercent: number;
+};
+
 function mergeWindow(
   previous: ProviderRateLimitWindow | undefined,
   update: ProviderRateLimitWindow | undefined,
@@ -22,6 +26,22 @@ export function mergeProviderRateLimits(
   return {
     ...(primary ? { primary } : {}),
     ...(secondary ? { secondary } : {}),
+  };
+}
+
+export function selectCodexUsageWindows(rateLimits: ProviderRateLimits | null | undefined): {
+  readonly fiveHour: AvailableProviderRateLimitWindow | null;
+  readonly weekly: AvailableProviderRateLimitWindow | null;
+} {
+  const windows = [rateLimits?.primary, rateLimits?.secondary].filter(
+    (window): window is AvailableProviderRateLimitWindow =>
+      window !== undefined &&
+      window.usedPercent !== undefined &&
+      Number.isFinite(window.usedPercent),
+  );
+  return {
+    fiveHour: windows.find((window) => window.windowDurationMins === 300) ?? null,
+    weekly: windows.find((window) => window.windowDurationMins === 10_080) ?? null,
   };
 }
 

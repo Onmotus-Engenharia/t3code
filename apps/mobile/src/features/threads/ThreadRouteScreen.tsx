@@ -298,6 +298,11 @@ function ThreadRouteContent(
       ),
     [selectedThread, threadShells],
   );
+  const contextDiffToTurnCount =
+    selectedThreadDetail?.checkpoints.reduce(
+      (latest, checkpoint) => Math.max(latest, checkpoint.checkpointTurnCount),
+      0,
+    ) ?? null;
   const [taskOrchestrationPendingKey, setTaskOrchestrationPendingKey] = useState<string | null>(
     null,
   );
@@ -919,6 +924,7 @@ function ThreadRouteContent(
         <ThreadDetailScreen
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           taskTreeContextWindowUsage={taskTreeContextWindowUsage}
+          contextDiffToTurnCount={contextDiffToTurnCount}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}
           connectionError={routeConnectionError}

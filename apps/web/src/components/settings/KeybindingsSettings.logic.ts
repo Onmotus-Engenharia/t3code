@@ -1,4 +1,5 @@
 import {
+  CONFIGURABLE_STATIC_KEYBINDING_COMMANDS,
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -29,7 +30,13 @@ export interface KeybindingRow {
 export type WhenVariableOption = string;
 export type KeybindingCommandOption = KeybindingCommand;
 
-const CORE_WHEN_VARIABLES = ["terminalFocus", "terminalOpen", "true", "false"] as const;
+const CORE_WHEN_VARIABLES = [
+  "terminalFocus",
+  "terminalOpen",
+  "splitViewActive",
+  "true",
+  "false",
+] as const;
 
 const DEFAULT_WHEN_VARIABLES = new Set<string>(CORE_WHEN_VARIABLES);
 for (const binding of DEFAULT_RESOLVED_KEYBINDINGS) {
@@ -256,8 +263,8 @@ export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>();
-  for (const binding of DEFAULT_RESOLVED_KEYBINDINGS) {
-    commands.add(binding.command);
+  for (const command of CONFIGURABLE_STATIC_KEYBINDING_COMMANDS) {
+    commands.add(command);
   }
   for (const binding of keybindings) {
     commands.add(binding.command);

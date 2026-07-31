@@ -5,7 +5,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
-import { useParams, useRouter } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
   markPromotedDraftThreadByRef,
@@ -24,6 +24,7 @@ import { readThreadShell, useProjects, useThread } from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
+import { useThreadNavigation } from "../threadSplitNavigation";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 
@@ -36,11 +37,11 @@ export function useNewThreadHandler() {
   // set those values on a remote server.
   const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const router = useRouter();
-  const getCurrentRouteTarget = useCallback(() => {
-    const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
-    return resolveThreadRouteTarget(currentRouteParams);
-  }, [router]);
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const threadNavigation = useThreadNavigation(routeTarget);
 
   return useCallback(
     (
@@ -63,7 +64,7 @@ export function useNewThreadHandler() {
         setLogicalProjectDraftThreadId,
         setModelSelection,
       } = useComposerDraftStore.getState();
-      const currentRouteTarget = getCurrentRouteTarget();
+      const currentRouteTarget = threadNavigation.getFocusedTarget();
       // A new thread carries the user's *working mode* from the thread being
       // viewed: model (including options like reasoning effort and context
       // window), permission mode, and interaction mode. Branch, worktree, and
@@ -191,7 +192,7 @@ export function useNewThreadHandler() {
             reusableStoredDraftThread.draftId,
             {
               threadId: reusableStoredDraftThread.threadId,
-              ...(workspaceContext ?? {}),
+              ...workspaceContext,
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
@@ -202,11 +203,13 @@ export function useNewThreadHandler() {
           ) {
             return;
           }
-          await router.navigate({
-            to: "/draft/$draftId",
-            params: { draftId: reusableStoredDraftThread.draftId },
-            replace: options?.replace ?? false,
-          });
+          await threadNavigation.openTarget(
+            { kind: "draft", draftId: reusableStoredDraftThread.draftId },
+            {
+              history: options?.replace ? "replace" : "push",
+              disposition: options?.replace ? "replace-focused-pane" : "activate-existing-group",
+            },
+          );
         })();
       }
 
@@ -272,14 +275,16 @@ export function useNewThreadHandler() {
           setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
         }
 
-        await router.navigate({
-          to: "/draft/$draftId",
-          params: { draftId },
-          replace: options?.replace ?? false,
-        });
+        await threadNavigation.openTarget(
+          { kind: "draft", draftId },
+          {
+            history: options?.replace ? "replace" : "push",
+            disposition: options?.replace ? "replace-focused-pane" : "activate-existing-group",
+          },
+        );
       })();
     },
-    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, projects, router],
+    [primaryServerSettings, projectGroupingSettings, projects, threadNavigation],
   );
 }
 
@@ -289,14 +294,16 @@ export function useHandleNewThread() {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
-  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const threadNavigation = useThreadNavigation(routeTarget);
+  const focusedTarget = threadNavigation.getFocusedTarget();
+  const routeThreadRef = focusedTarget?.kind === "server" ? focusedTarget.threadRef : null;
   const activeThread = useThread(routeThreadRef);
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
   const activeDraftThread = useComposerDraftStore(() =>
-    routeTarget
-      ? routeTarget.kind === "server"
-        ? getDraftThread(routeTarget.threadRef)
-        : useComposerDraftStore.getState().getDraftSession(routeTarget.draftId)
+    focusedTarget
+      ? focusedTarget.kind === "server"
+        ? getDraftThread(focusedTarget.threadRef)
+        : useComposerDraftStore.getState().getDraftSession(focusedTarget.draftId)
       : null,
   );
   const projects = useProjects();

@@ -395,6 +395,57 @@ describe("shortcutLabelForCommand", () => {
   });
 });
 
+describe("split-view command resolution", () => {
+  const splitViewBindings = compile([
+    {
+      shortcut: modShortcut("[", { altKey: true }),
+      command: "splitView.focusPrevious",
+      whenAst: whenIdentifier("splitViewActive"),
+    },
+    {
+      shortcut: modShortcut("]", { altKey: true }),
+      command: "splitView.focusNext",
+      whenAst: whenIdentifier("splitViewActive"),
+    },
+  ]);
+
+  it("resolves previous and next only while a split view is active", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "[", code: "BracketLeft", ctrlKey: true, altKey: true }),
+        splitViewBindings,
+        { platform: "Linux", context: { splitViewActive: true } },
+      ),
+      "splitView.focusPrevious",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "]", code: "BracketRight", ctrlKey: true, altKey: true }),
+        splitViewBindings,
+        { platform: "Linux", context: { splitViewActive: true } },
+      ),
+      "splitView.focusNext",
+    );
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "[", code: "BracketLeft", ctrlKey: true, altKey: true }),
+        splitViewBindings,
+        { platform: "Linux", context: { splitViewActive: false } },
+      ),
+    );
+  });
+
+  it("continues resolving ordinary commands when older servers omit split-view defaults", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "j", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { splitViewActive: true },
+      }),
+      "terminal.toggle",
+    );
+  });
+});
+
 describe("thread navigation helpers", () => {
   it("maps jump commands to visible thread indices", () => {
     assert.strictEqual(threadJumpCommandForIndex(0), "thread.jump.1");

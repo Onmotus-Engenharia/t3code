@@ -47,7 +47,19 @@ export const MODEL_PICKER_KEYBINDING_COMMANDS = [
 ] as const;
 export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
-const STATIC_KEYBINDING_COMMANDS = [
+export const SPLIT_VIEW_KEYBINDING_COMMANDS = [
+  "splitView.focusPrevious",
+  "splitView.focusNext",
+  "splitView.removeFocusedPane",
+  "splitView.closeGroup",
+  "splitView.toggleTaskTree",
+  "splitView.layoutAuto",
+  "splitView.layoutColumns",
+  "splitView.layoutRows",
+] as const;
+export type SplitViewKeybindingCommand = (typeof SPLIT_VIEW_KEYBINDING_COMMANDS)[number];
+
+export const CONFIGURABLE_STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
   "terminal.toggle",
   "terminal.split",
@@ -67,6 +79,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
+  ...SPLIT_VIEW_KEYBINDING_COMMANDS,
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
@@ -81,7 +94,7 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
 ]);
 
 export const KeybindingCommand = Schema.Union([
-  Schema.Literals(STATIC_KEYBINDING_COMMANDS),
+  Schema.Literals(CONFIGURABLE_STATIC_KEYBINDING_COMMANDS),
   SCRIPT_RUN_COMMAND_PATTERN,
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;

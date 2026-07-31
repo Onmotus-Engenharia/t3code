@@ -30,6 +30,7 @@ import { buttonVariants } from "~/components/ui/button";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { resolveThreadRouteTarget } from "~/threadRoutes";
+import { useFocusedSplitViewContext } from "~/splitViewCommands";
 import {
   buildVisibleToastLayout,
   shouldHideCollapsedToastContent,
@@ -432,22 +433,23 @@ function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
+  const focusedTarget = useFocusedSplitViewContext(routeTarget).focusedTarget;
   const activeDraftSession = useComposerDraftStore((store) =>
-    routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
+    focusedTarget?.kind === "draft" ? store.getDraftSession(focusedTarget.draftId) : null,
   );
 
   return useMemo(() => {
-    if (routeTarget?.kind === "server") {
-      return routeTarget.threadRef;
+    if (focusedTarget?.kind === "server") {
+      return focusedTarget.threadRef;
     }
-    if (routeTarget?.kind === "draft" && activeDraftSession) {
+    if (focusedTarget?.kind === "draft" && activeDraftSession) {
       return {
         environmentId: activeDraftSession.environmentId,
         threadId: activeDraftSession.threadId,
       };
     }
     return null;
-  }, [activeDraftSession, routeTarget]);
+  }, [activeDraftSession, focusedTarget]);
 }
 
 function ThreadToastVisibleAutoDismiss({

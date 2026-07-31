@@ -1,3 +1,8 @@
+import type { ProviderRateLimits } from "@t3tools/contracts";
+import {
+  selectCodexUsageWindows,
+  type AvailableProviderRateLimitWindow,
+} from "@t3tools/shared/providerRateLimits";
 import { cn } from "~/lib/utils";
 import {
   type ContextWindowSnapshot,
@@ -16,12 +21,24 @@ function formatPercentage(value: number | null): string | null {
   return `${Math.round(value)}%`;
 }
 
+function UsageLimitRow(props: { label: string; window: AvailableProviderRateLimitWindow }) {
+  const usedPercent = Math.round(Math.max(0, Math.min(100, props.window.usedPercent)));
+  return (
+    <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
+      <span className="text-muted-foreground/60">{props.label}</span>
+      <span className="font-medium tabular-nums text-muted-foreground/80">{usedPercent}% used</span>
+    </div>
+  );
+}
+
 export function ContextWindowMeter(props: {
   usage: ContextWindowSnapshot;
   taskTreeUsage?: TaskTreeContextWindowUsage | null;
   providerDisplayName?: string | null;
+  fullDiffStat?: { readonly additions: number; readonly deletions: number } | null;
+  codexRateLimits?: ProviderRateLimits | null;
 }) {
-  const { usage, taskTreeUsage, providerDisplayName } = props;
+  const { usage, taskTreeUsage, providerDisplayName, fullDiffStat, codexRateLimits } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
@@ -38,6 +55,8 @@ export function ContextWindowMeter(props: {
   const usageColor = isOverloaded
     ? "var(--color-red-500)"
     : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
+  const codexUsage = selectCodexUsageWindows(codexRateLimits);
+  const showCodexUsage = codexUsage.fiveHour !== null || codexUsage.weekly !== null;
 
   return (
     <Popover>
@@ -182,6 +201,31 @@ export function ContextWindowMeter(props: {
                   {formatContextWindowTokens(taskTreeUsage.totalProcessedTokens)}
                 </span>
               </div>
+            </div>
+          ) : null}
+          {fullDiffStat ? (
+            <div className="mt-1 flex items-center justify-between gap-3 border-border/50 border-t pt-2 text-[11px] leading-4">
+              <span className="text-muted-foreground/60">
+                {taskTreeUsage ? "Full task tree" : "Full thread"}
+              </span>
+              <span
+                aria-label={`${fullDiffStat.additions} additions, ${fullDiffStat.deletions} deletions`}
+                className="flex items-center gap-2 font-medium font-mono tabular-nums"
+              >
+                <span className="text-success">+{fullDiffStat.additions}</span>
+                <span className="text-destructive">-{fullDiffStat.deletions}</span>
+              </span>
+            </div>
+          ) : null}
+          {showCodexUsage ? (
+            <div className="mt-1 flex flex-col gap-1 border-border/50 border-t pt-2">
+              <div className="mb-0.5 font-medium text-muted-foreground text-xs">Codex usage</div>
+              {codexUsage.fiveHour ? (
+                <UsageLimitRow label="5h" window={codexUsage.fiveHour} />
+              ) : null}
+              {codexUsage.weekly ? (
+                <UsageLimitRow label="Weekly" window={codexUsage.weekly} />
+              ) : null}
             </div>
           ) : null}
           {usage.compactsAutomatically ? (
