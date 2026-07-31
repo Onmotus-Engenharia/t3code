@@ -19,25 +19,20 @@ export function getPreviewPanelMaxWidth(viewportWidth: number): number {
 }
 
 /**
- * Shell for the preview panel. In inline mode the panel is user-resizable
- * via a drag handle on the left edge; width persists per browser. In
- * sheet/sidebar modes the parent owns the size.
+ * Shell for the preview panel. Inline panels are user-resizable via a drag
+ * handle on the left edge; width persists per browser. Sheet/sidebar modes
+ * are sized by their parent.
  */
 export function PreviewPanelShell(props: {
   mode: PreviewPanelMode;
   maximized?: boolean;
+  onResizeStart?: () => void;
   children: ReactNode;
 }) {
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
   const maxWidth = useViewportClampedMaxWidth();
-  const { width, handlers } = useResizableWidth({
-    storageKey: PREVIEW_PANEL_WIDTH_STORAGE_KEY,
-    defaultWidth: PREVIEW_PANEL_DEFAULT_WIDTH,
-    minWidth: PREVIEW_PANEL_MIN_WIDTH,
-    maxWidth,
-    edge: "left",
-  });
+  const { width, handlers } = useRightPanelResizableWidth(maxWidth);
 
   return (
     <div
@@ -53,11 +48,31 @@ export function PreviewPanelShell(props: {
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={props.maximized ? "true" : "false"}
     >
-      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
+      {isInline ? (
+        <RightPanelResizeHandle
+          handlers={{
+            ...handlers,
+            onPointerDown: (event) => {
+              props.onResizeStart?.();
+              handlers.onPointerDown(event);
+            },
+          }}
+        />
+      ) : null}
       {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
       {props.children}
     </div>
   );
+}
+
+export function useRightPanelResizableWidth(maxWidth: number) {
+  return useResizableWidth({
+    storageKey: PREVIEW_PANEL_WIDTH_STORAGE_KEY,
+    defaultWidth: PREVIEW_PANEL_DEFAULT_WIDTH,
+    minWidth: Math.min(PREVIEW_PANEL_MIN_WIDTH, maxWidth),
+    maxWidth,
+    edge: "left",
+  });
 }
 
 /**
@@ -65,7 +80,7 @@ export function PreviewPanelShell(props: {
  * Resize-aware so dragging the OS window narrower re-clamps the stored
  * width on the next render (the hook's clamp picks this up automatically).
  */
-function useViewportClampedMaxWidth(): number {
+export function useViewportClampedMaxWidth(): number {
   const [vw, setVw] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
   useEffect(() => {
     if (typeof window === "undefined") return;
