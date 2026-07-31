@@ -72,13 +72,15 @@ function ChatThreadRouteView() {
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
 
-  if (!threadRef || renderState !== "ready") {
+  if (!threadRef) {
     return null;
   }
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      <ThreadSplitView routeTarget={{ kind: "server", threadRef } satisfies ThreadRouteTarget} />
+      {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
+        <ThreadSplitView routeTarget={{ kind: "server", threadRef } satisfies ThreadRouteTarget} />
+      ) : null}
     </SidebarInset>
   );
 }

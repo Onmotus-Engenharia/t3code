@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/contracts",
-  "version": "0.0.30-orchestrator.1",
+  "version": "0.0.31-orchestrator.1",
   "private": true,
   "files": [
     "dist"

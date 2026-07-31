@@ -39,8 +39,10 @@ import {
   threadRouteTargetToSplitKey,
   type ThreadRouteTarget,
 } from "../../threadRoutes";
+import { resolveThreadSyncPhase } from "../../threadSync";
 import { useThreadNavigation, type ThreadNavigation } from "../../threadSplitNavigation";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
+import { useThreadDetail, useThreadShell, useThreadStatus } from "../../state/entities";
 import {
   hasMeaningfulThreadSplitSizeChange,
   reconcileThreadSplitDrawerOwnerKeys,
@@ -105,9 +107,20 @@ function ThreadTargetChat({
   forceExpandedMobileComposer?: boolean;
 }) {
   const draftId = targetKey.startsWith("draft:") ? targetKey.slice("draft:".length) : null;
+  const serverThreadRef = targetKey.startsWith("server:")
+    ? parseScopedThreadKey(targetKey.slice("server:".length))
+    : null;
   const draftSession = useComposerDraftStore((state) =>
     draftId ? state.getDraftSession(draftId as never) : null,
   );
+  const serverThreadShell = useThreadShell(serverThreadRef);
+  const serverThreadDetail = useThreadDetail(serverThreadRef);
+  const serverThreadStatus = useThreadStatus(serverThreadRef);
+  const threadSyncPhase = resolveThreadSyncPhase({
+    detailExists: serverThreadDetail !== null,
+    shellExists: serverThreadShell !== null,
+    status: serverThreadStatus,
+  });
   if (targetKey.startsWith("draft:")) {
     if (!draftSession || !draftId) return null;
     return (
@@ -121,14 +134,14 @@ function ThreadTargetChat({
       />
     );
   }
-  const ref = parseScopedThreadKey(targetKey.slice("server:".length));
-  if (!ref) return null;
+  if (!serverThreadRef) return null;
   return (
     <ChatView
-      environmentId={ref.environmentId}
-      threadId={ref.threadId}
+      environmentId={serverThreadRef.environmentId}
+      threadId={serverThreadRef.threadId}
       routeKind="server"
       reserveTitleBarControlInset={reserveTitleBarControlInset}
+      threadSyncPhase={threadSyncPhase}
     />
   );
 }
