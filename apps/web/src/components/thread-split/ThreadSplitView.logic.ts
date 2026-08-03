@@ -25,6 +25,15 @@ export function resolveThreadSplitRenderTargets(
   return compact ? [group.focusedTargetKey] : group.targetKeys;
 }
 
+export function resolveThreadPaneAuxiliaryPanelPresentation(
+  placement: { readonly width: number } | null,
+  compact: boolean,
+): "auto" | "inline" | "sheet" {
+  if (compact) return "sheet";
+  if (!placement) return "auto";
+  return placement.width >= 720 ? "inline" : "sheet";
+}
+
 export function reconcileThreadSplitDrawerOwnerKeys(
   currentKeys: readonly string[],
   activeKeys: readonly string[],

@@ -46,6 +46,7 @@ import { useThreadDetail, useThreadShell, useThreadStatus } from "../../state/en
 import {
   hasMeaningfulThreadSplitSizeChange,
   reconcileThreadSplitDrawerOwnerKeys,
+  resolveThreadPaneAuxiliaryPanelPresentation,
   resolveThreadSplitRenderTargets,
   selectOpenTerminalKeys,
   threadSplitSeparatorLabel,
@@ -226,7 +227,10 @@ function ThreadPaneHost({
           isFocused: focused,
           navigation,
           presentation: compact ? "compact" : "pane",
-          auxiliaryPanelPresentation: placement && placement.width >= 720 ? "inline" : "sheet",
+          auxiliaryPanelPresentation: resolveThreadPaneAuxiliaryPanelPresentation(
+            placement,
+            compact,
+          ),
           ownsPersistentTerminalDrawer: false,
           publishPersistentTerminalRuntime: publishRuntime,
         }}

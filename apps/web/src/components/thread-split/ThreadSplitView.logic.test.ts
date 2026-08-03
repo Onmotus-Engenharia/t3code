@@ -4,6 +4,7 @@ import type { ThreadSplitGroup, ThreadSplitTargetKey } from "../../threadSplitSt
 import {
   hasMeaningfulThreadSplitSizeChange,
   reconcileThreadSplitDrawerOwnerKeys,
+  resolveThreadPaneAuxiliaryPanelPresentation,
   resolveThreadSplitRenderTargets,
   selectOpenTerminalKeys,
   threadSplitSeparatorLabel,
@@ -26,6 +27,19 @@ describe("ThreadSplitView logic", () => {
 
   it("mounts only the focused group member in compact workspaces", () => {
     expect(resolveThreadSplitRenderTargets(keys[0]!, group, true)).toEqual([keys[1]]);
+  });
+
+  it("keeps standalone panes on ChatView's automatic auxiliary-panel policy", () => {
+    expect(resolveThreadPaneAuxiliaryPanelPresentation(null, false)).toBe("auto");
+  });
+
+  it("keeps compact and narrow split panes in sheets", () => {
+    expect(resolveThreadPaneAuxiliaryPanelPresentation({ width: 1200 }, true)).toBe("sheet");
+    expect(resolveThreadPaneAuxiliaryPanelPresentation({ width: 719 }, false)).toBe("sheet");
+  });
+
+  it("keeps the split-pane inline threshold at 720px", () => {
+    expect(resolveThreadPaneAuxiliaryPanelPresentation({ width: 720 }, false)).toBe("inline");
   });
 
   it("ignores ResizeObserver noise below the meaningful threshold", () => {
