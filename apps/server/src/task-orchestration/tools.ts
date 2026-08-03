@@ -56,12 +56,12 @@ export const T3_TASK_DYNAMIC_TOOLS: ReadonlyArray<V2ThreadStartParams__DynamicTo
         },
         ["tasks"],
       ),
-      functionTool("list", "List tasks created by this orchestrator thread.", {
+      functionTool("list", "List owned tasks, each with contextHealth.", {
         status: { type: "string", minLength: 1 },
       }),
       functionTool(
         "read",
-        "Read bounded projected messages for one owned task.",
+        "Read bounded projected messages and contextHealth for one owned task.",
         {
           threadId: { type: "string", minLength: 1 },
           cursor: { type: "integer", minimum: 0 },
@@ -71,7 +71,7 @@ export const T3_TASK_DYNAMIC_TOOLS: ReadonlyArray<V2ThreadStartParams__DynamicTo
       ),
       functionTool(
         "wait",
-        "Wait for status changes, new output, or timeout across up to four owned tasks.",
+        "Wait for status changes, new output, or timeout across up to four owned tasks, returning contextHealth for each task.",
         {
           tasks: {
             type: "array",
@@ -94,7 +94,7 @@ export const T3_TASK_DYNAMIC_TOOLS: ReadonlyArray<V2ThreadStartParams__DynamicTo
       ),
       functionTool(
         "message",
-        "Send a new user turn to one owned task.",
+        "Immediately before dispatch, recompute contextHealth and reject unsafe reuse with machine-readable error code unsafe_reuse; never create a replacement task server-side.",
         {
           threadId: { type: "string", minLength: 1 },
           message: { type: "string", minLength: 1, maxLength: 100000 },

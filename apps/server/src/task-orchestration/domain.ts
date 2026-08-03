@@ -6,6 +6,8 @@ import {
   type TaskWorkspaceMode,
 } from "@t3tools/contracts";
 
+import { deriveTaskContextHealth, type TaskContextHealth } from "./contextHealth.ts";
+
 export type ToolErrorCode =
   | "invalid_arguments"
   | "permission_denied"
@@ -16,21 +18,24 @@ export type ToolErrorCode =
   | "model_unavailable"
   | "reasoning_effort_unavailable"
   | "workspace_isolation_failed"
+  | "unsafe_reuse"
   | "orchestration_failed";
 
 export class ToolFailure extends Error {
   readonly code: ToolErrorCode;
   override readonly message: string;
+  readonly details: unknown;
 
-  constructor(code: ToolErrorCode, message: string) {
+  constructor(code: ToolErrorCode, message: string, details?: unknown) {
     super(message);
     this.code = code;
     this.message = message;
+    this.details = details;
   }
 }
 
-export const fail = (code: ToolErrorCode, message: string): never => {
-  throw new ToolFailure(code, message);
+export const fail = (code: ToolErrorCode, message: string, details?: unknown): never => {
+  throw new ToolFailure(code, message, details);
 };
 
 export const object = (value: unknown): Record<string, unknown> =>
@@ -177,7 +182,10 @@ export const reasoningEffort = (thread: OrchestrationThread): string | null => {
   return typeof selection?.value === "string" ? selection.value : null;
 };
 
-export const taskSummary = (thread: OrchestrationThread) => ({
+export const taskSummary = (
+  thread: OrchestrationThread,
+  contextHealth: TaskContextHealth = deriveTaskContextHealth(thread),
+) => ({
   threadId: thread.id,
   parentThreadId: thread.taskRelation?.parentThreadId ?? null,
   depth: thread.taskRelation?.depth ?? 0,
@@ -188,6 +196,7 @@ export const taskSummary = (thread: OrchestrationThread) => ({
   model: thread.modelSelection.model,
   reasoningEffort: reasoningEffort(thread),
   pinned: thread.pinned,
+  contextHealth,
 });
 
 export const deriveTaskTitle = (prompt: string, requestedTitle?: string): string =>
@@ -233,12 +242,11 @@ export const selectOwnedTaskSummaries = (
   threads
     .filter(
       (thread) =>
-        thread.taskRelation?.parentThreadId === caller.id &&
-        thread.projectId === caller.projectId &&
+        ownsThread(caller, thread) &&
         thread.deletedAt === null &&
         (status === undefined || threadStatus(thread) === status),
     )
-    .map(taskSummary);
+    .map((thread) => taskSummary(thread));
 
 export const validateTaskModelSelection = (
   providers: ReadonlyArray<ServerProvider>,

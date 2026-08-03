@@ -16,6 +16,7 @@ import { ProjectionSnapshotQuery } from "../../orchestration/Services/Projection
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { T3Tasks } from "../Services/T3Tasks.ts";
 import { type T3TaskToolCall, installT3TaskToolHandler } from "../Services/T3TaskToolBridge.ts";
+import { deriveTaskContextHealth } from "../contextHealth.ts";
 import {
   ToolFailure,
   createLimitForCaller,
@@ -155,10 +156,12 @@ export const makeT3Tasks = Effect.gen(function* () {
       const tail = selected.at(-1);
       const nextCursor =
         tail?.streaming === true ? cursor + selected.length - 1 : cursor + selected.length;
+      const contextHealth = deriveTaskContextHealth(target);
       return {
         threadId: target.id,
         status: threadStatus(target),
-        summary: taskSummary(target),
+        summary: taskSummary(target, contextHealth),
+        contextHealth,
         messages: selected.map((message) => ({
           id: message.id,
           role: message.role,
@@ -223,6 +226,7 @@ export const makeT3Tasks = Effect.gen(function* () {
                 (wait.outputToken === undefined || outputToken !== wait.outputToken),
               nextCursor: wait.cursor,
               outputToken,
+              contextHealth: deriveTaskContextHealth(target),
             };
           }),
         ),
@@ -239,6 +243,7 @@ export const makeT3Tasks = Effect.gen(function* () {
             (wait.outputToken === undefined || outputToken !== wait.outputToken),
           nextCursor: wait.cursor,
           outputToken,
+          contextHealth: deriveTaskContextHealth(target),
         };
       });
       const signals = yield* Queue.unbounded<void>();
@@ -289,14 +294,36 @@ export const makeT3Tasks = Effect.gen(function* () {
           `Task '${target.id}' is active and cannot accept another message yet.`,
         );
       }
-      yield* dispatchTurn(target, requiredString(args, "message"));
+      const projectedBeforeDispatch = yield* query.getThreadDetailById(target.id);
+      const freshTarget = Option.getOrUndefined(projectedBeforeDispatch);
+      if (!freshTarget) return fail("not_found", `Task '${target.id}' was not found.`);
+      if (
+        freshTarget.latestTurn?.state === "running" ||
+        freshTarget.session?.status === "starting" ||
+        freshTarget.session?.status === "running"
+      ) {
+        return fail(
+          "invalid_arguments",
+          `Task '${freshTarget.id}' is active and cannot accept another message yet.`,
+        );
+      }
+      const contextHealth = deriveTaskContextHealth(freshTarget);
+      if (!contextHealth.reuseAllowed) {
+        return fail(
+          "unsafe_reuse",
+          `Task '${freshTarget.id}' cannot be reused because its context is ${contextHealth.reason}.`,
+          { contextHealth },
+        );
+      }
+      yield* dispatchTurn(freshTarget, requiredString(args, "message"));
       yield* Effect.sleep("25 millis");
-      const projected = yield* query.getThreadDetailById(target.id);
+      const projected = yield* query.getThreadDetailById(freshTarget.id);
       const updated = Option.getOrUndefined(projected);
       return {
-        threadId: target.id,
+        threadId: freshTarget.id,
         turnId: updated?.latestTurn?.turnId ?? null,
         status: updated ? threadStatus(updated) : "requested",
+        contextHealth,
       };
     }
 
@@ -401,6 +428,7 @@ export const makeT3Tasks = Effect.gen(function* () {
             error: {
               code: failure.code,
               message: failure.message,
+              ...(failure.details === undefined ? {} : { details: failure.details }),
             },
           }),
         );

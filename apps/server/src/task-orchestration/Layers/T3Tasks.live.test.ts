@@ -56,8 +56,47 @@ const thread = (input: {
       : null,
   }) as unknown as OrchestrationThread;
 
+const contextWindowActivity = (id: string, usedTokens: number, maxTokens?: number) =>
+  ({
+    id,
+    tone: "info",
+    kind: "context-window.updated",
+    summary: "Context window updated",
+    payload: {
+      usedTokens,
+      ...(maxTokens === undefined ? {} : { maxTokens }),
+    },
+    turnId: null,
+    createdAt: "2026-07-28T00:00:00.000Z",
+  }) as unknown as OrchestrationThread["activities"][number];
+
+const contextCompactionActivity = (id: string) =>
+  ({
+    id,
+    tone: "info",
+    kind: "context-compaction",
+    summary: "Context compacted",
+    payload: {},
+    turnId: null,
+    createdAt: "2026-07-28T00:00:04.000Z",
+  }) as unknown as OrchestrationThread["activities"][number];
+
+const contextHealth = (input: {
+  readonly usedTokens: number | null;
+  readonly maxTokens: number | null;
+  readonly compacted: boolean;
+  readonly reuseAllowed: boolean;
+  readonly reason: "safe" | "threshold_reached" | "compacted" | "unmeasurable";
+}) => ({
+  ...input,
+  usedPercentage:
+    input.usedTokens === null || input.maxTokens === null
+      ? null
+      : (input.usedTokens / input.maxTokens) * 100,
+});
+
 effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
-  it.effect("gates permission and coordinates list/read/wait/message/interrupt/pin", () =>
+  it.effect("coordinates task operations and context-health-safe reuse", () =>
     Effect.gen(function* () {
       const caller = {
         ...thread({ id: "root" }),
@@ -68,6 +107,11 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
         ...thread({ id: "child", rootThreadId: "root", parentThreadId: "root" }),
         projectId: "project-1",
         taskOrchestrationEnabled: false,
+        latestTokenUsage: {
+          usedTokens: 79,
+          maxTokens: 100,
+        },
+        activities: [contextWindowActivity("context-79", 79, 100)],
         messages: [
           {
             id: MessageId.make("message-1"),
@@ -194,7 +238,18 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       }));
       const listed = yield* call("list", {});
       NodeAssert.equal(listed.success, true);
-      NodeAssert.equal((body(listed).tasks as Array<unknown>).length, 1);
+      const listedTasks = body(listed).tasks as Array<{ contextHealth?: unknown }>;
+      NodeAssert.equal(listedTasks.length, 1);
+      NodeAssert.deepStrictEqual(
+        listedTasks[0]?.contextHealth,
+        contextHealth({
+          usedTokens: 79,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: true,
+          reason: "safe",
+        }),
+      );
 
       const enabled = yield* call("orchestration", {
         threadId: "child",
@@ -220,6 +275,24 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
           candidate.id === "child" ? { ...candidate, taskOrchestrationEnabled: true } : candidate,
         ),
       }));
+      const rootGrandchildRead = yield* call("read", { threadId: "grandchild" });
+      NodeAssert.equal(rootGrandchildRead.success, false);
+      NodeAssert.equal(
+        (body(rootGrandchildRead).error as { code?: string }).code,
+        "ownership_denied",
+      );
+      const childGrandchildRead = yield* callAs("child", "read", { threadId: "grandchild" });
+      NodeAssert.equal(childGrandchildRead.success, true);
+      NodeAssert.equal(body(childGrandchildRead).threadId, "grandchild");
+      const childGrandchildMessage = yield* callAs("child", "message", {
+        threadId: "grandchild",
+        message: "reuse only when safe",
+      });
+      NodeAssert.equal(childGrandchildMessage.success, false);
+      NodeAssert.equal(
+        (body(childGrandchildMessage).error as { code?: string }).code,
+        "unsafe_reuse",
+      );
       const invalidDepth = yield* callAs("child", "orchestration", {
         threadId: "grandchild",
         enabled: true,
@@ -229,6 +302,26 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
 
       const read = yield* call("read", { threadId: "child", cursor: 0, limit: 1 });
       NodeAssert.equal((body(read).messages as Array<unknown>).length, 1);
+      NodeAssert.deepStrictEqual(
+        body(read).contextHealth as unknown,
+        contextHealth({
+          usedTokens: 79,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: true,
+          reason: "safe",
+        }),
+      );
+      NodeAssert.deepStrictEqual(
+        (body(read).summary as { contextHealth?: unknown }).contextHealth,
+        contextHealth({
+          usedTokens: 79,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: true,
+          reason: "safe",
+        }),
+      );
       NodeAssert.equal(body(read).nextCursor, 0);
       NodeAssert.match(String(body(read).outputToken), /message-1/);
       yield* Ref.update(snapshotRef, (snapshot) => ({
@@ -255,6 +348,16 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
         timeoutSeconds: 0,
       });
       NodeAssert.equal(body(timedOut).timedOut, true);
+      NodeAssert.deepStrictEqual(
+        (body(timedOut).tasks as Array<{ contextHealth?: unknown }>)[0]?.contextHealth,
+        contextHealth({
+          usedTokens: 79,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: true,
+          reason: "safe",
+        }),
+      );
 
       const waiting = yield* Effect.forkChild(
         call("wait", {
@@ -370,6 +473,158 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
           candidate.id === "child" ? { ...candidate, latestTurn: null } : candidate,
         ),
       }));
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "child"
+            ? {
+                ...candidate,
+                latestTokenUsage: { usedTokens: 80, maxTokens: 100 },
+                activities: [contextWindowActivity("context-80", 80, 100)],
+              }
+            : candidate,
+        ),
+      }));
+      const atLimit = yield* call("message", { threadId: "child", message: "at limit" });
+      NodeAssert.equal(atLimit.success, false);
+      NodeAssert.equal((body(atLimit).error as { code?: string }).code, "unsafe_reuse");
+      NodeAssert.deepStrictEqual(
+        (
+          (body(atLimit).error as { details?: { contextHealth?: unknown } }).details as {
+            contextHealth?: unknown;
+          }
+        ).contextHealth,
+        contextHealth({
+          usedTokens: 80,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: false,
+          reason: "threshold_reached",
+        }),
+      );
+      const unsafeList = yield* call("list", {});
+      NodeAssert.deepStrictEqual(
+        (body(unsafeList).tasks as Array<{ contextHealth?: unknown }>)[0]?.contextHealth,
+        contextHealth({
+          usedTokens: 80,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: false,
+          reason: "threshold_reached",
+        }),
+      );
+      const unsafeRead = yield* call("read", { threadId: "child" });
+      NodeAssert.deepStrictEqual(
+        body(unsafeRead).contextHealth,
+        contextHealth({
+          usedTokens: 80,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: false,
+          reason: "threshold_reached",
+        }),
+      );
+      const unsafeWait = yield* call("wait", {
+        tasks: [{ threadId: "child" }],
+        timeoutSeconds: 0,
+      });
+      NodeAssert.deepStrictEqual(
+        (body(unsafeWait).tasks as Array<{ contextHealth?: unknown }>)[0]?.contextHealth,
+        contextHealth({
+          usedTokens: 80,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: false,
+          reason: "threshold_reached",
+        }),
+      );
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "child"
+            ? {
+                ...candidate,
+                latestTokenUsage: { usedTokens: 81, maxTokens: 100 },
+                activities: [contextWindowActivity("context-81", 81, 100)],
+              }
+            : candidate,
+        ),
+      }));
+      const aboveLimit = yield* call("message", { threadId: "child", message: "above limit" });
+      NodeAssert.equal(aboveLimit.success, false);
+      NodeAssert.equal((body(aboveLimit).error as { code?: string }).code, "unsafe_reuse");
+      NodeAssert.equal(
+        (
+          body(aboveLimit).error as {
+            details?: { contextHealth?: { reason?: string } };
+          }
+        ).details?.contextHealth?.reason,
+        "threshold_reached",
+      );
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "child"
+            ? {
+                ...candidate,
+                latestTokenUsage: { usedTokens: 1, maxTokens: 100 },
+                activities: [
+                  contextWindowActivity("context-low", 1, 100),
+                  contextCompactionActivity("compaction-1"),
+                ],
+              }
+            : candidate,
+        ),
+      }));
+      const compacted = yield* call("message", { threadId: "child", message: "compacted" });
+      NodeAssert.equal(compacted.success, false);
+      NodeAssert.equal((body(compacted).error as { code?: string }).code, "unsafe_reuse");
+      NodeAssert.equal(
+        (
+          body(compacted).error as {
+            details?: { contextHealth?: { reason?: string } };
+          }
+        ).details?.contextHealth?.reason,
+        "compacted",
+      );
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "child"
+            ? {
+                ...candidate,
+                latestTokenUsage: { usedTokens: 1 },
+                activities: [contextWindowActivity("context-missing", 1)],
+              }
+            : candidate,
+        ),
+      }));
+      const unmeasurable = yield* call("message", {
+        threadId: "child",
+        message: "unmeasurable",
+      });
+      NodeAssert.equal(unmeasurable.success, false);
+      NodeAssert.equal((body(unmeasurable).error as { code?: string }).code, "unsafe_reuse");
+      NodeAssert.equal(
+        (
+          body(unmeasurable).error as {
+            details?: { contextHealth?: { reason?: string } };
+          }
+        ).details?.contextHealth?.reason,
+        "unmeasurable",
+      );
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "child"
+            ? {
+                ...candidate,
+                latestTokenUsage: { usedTokens: 79, maxTokens: 100 },
+                activities: [contextWindowActivity("context-safe-again", 79, 100)],
+              }
+            : candidate,
+        ),
+      }));
       const messaging = yield* Effect.forkChild(
         call("message", { threadId: "child", message: "follow up" }),
       );
@@ -378,6 +633,57 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       const message = yield* Fiber.join(messaging);
       NodeAssert.equal(message.success, true);
       NodeAssert.equal(body(message).turnId, "turn-started");
+      NodeAssert.deepStrictEqual(
+        body(message).contextHealth,
+        contextHealth({
+          usedTokens: 79,
+          maxTokens: 100,
+          compacted: false,
+          reuseAllowed: true,
+          reason: "safe",
+        }),
+      );
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "child"
+            ? {
+                ...candidate,
+                latestTokenUsage: { usedTokens: 80, maxTokens: 100 },
+                activities: [contextWindowActivity("context-running-80", 80, 100)],
+              }
+            : candidate,
+        ),
+      }));
+      const interruptCountBeforeCompletion = (yield* Ref.get(commands)).filter(
+        (command) => command.type === "thread.turn.interrupt",
+      ).length;
+      NodeAssert.equal(interruptCountBeforeCompletion, 0);
+      yield* Ref.update(snapshotRef, (snapshot) => ({
+        ...snapshot,
+        threads: snapshot.threads.map((candidate) =>
+          candidate.id === "child" && candidate.latestTurn
+            ? {
+                ...candidate,
+                latestTurn: {
+                  ...candidate.latestTurn,
+                  state: "completed" as const,
+                  completedAt: "2026-07-28T00:00:05.000Z",
+                },
+              }
+            : candidate,
+        ),
+      }));
+      const completedAfterUnsafeUsage = yield* call("list", { status: "completed" });
+      NodeAssert.equal(
+        (body(completedAfterUnsafeUsage).tasks as Array<{ status?: string }>)[0]?.status,
+        "completed",
+      );
+      NodeAssert.equal(
+        (yield* Ref.get(commands)).filter((command) => command.type === "thread.turn.interrupt")
+          .length,
+        0,
+      );
       yield* call("interrupt", { threadId: "child" });
       yield* call("pin", { threadId: "child", pinned: true });
       yield* call("pin", { threadId: "child", pinned: false });
