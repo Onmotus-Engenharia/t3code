@@ -98,9 +98,11 @@ describe("thread split groups", () => {
     expect(store.getState().groupOrder).toEqual([second]);
   });
 
-  it("enforces twelve panes and assigns normalized average weights", () => {
+  it("enforces the fifty-pane cap and assigns normalized average weights", () => {
     const store = makeStore();
-    const targets = Array.from({ length: 14 }, (_, index) => server("env", `${index}`));
+    const targets = Array.from({ length: THREAD_SPLIT_MAX_PANES + 2 }, (_, index) =>
+      server("env", `${index}`),
+    );
     const id = store.getState().openTargets(targets)!;
     const group = store.getState().groups[id]!;
 
@@ -111,7 +113,9 @@ describe("thread split groups", () => {
 
   it("does not evict a target from its current group when the destination is full", () => {
     const store = makeStore();
-    const fullTargets = Array.from({ length: 12 }, (_, index) => server("env", `full-${index}`));
+    const fullTargets = Array.from({ length: THREAD_SPLIT_MAX_PANES }, (_, index) =>
+      server("env", `full-${index}`),
+    );
     const moving = server("env", "moving");
     const peer = server("env", "peer");
     const full = store.getState().openTargets(fullTargets)!;
@@ -213,6 +217,32 @@ describe("thread split groups", () => {
     store.getState().focusTarget(a);
     expect(storage.setItem).toHaveBeenCalledWith(THREAD_SPLIT_STORAGE_KEY, expect.any(String));
     expect(JSON.parse(storage.value!).groups.saved.focusedTargetKey).toBe(a);
+  });
+
+  it("normalizes persisted grid settings without changing an existing layout mode", () => {
+    const a = server("env", "a");
+    const b = server("env", "b");
+    const repaired = repairPersistedThreadSplitState({
+      version: 1,
+      groupOrder: ["saved"],
+      activeGroupId: "saved",
+      groups: {
+        saved: {
+          targetKeys: [a, b],
+          focusedTargetKey: a,
+          layoutMode: "columns",
+          gridColumns: 99,
+          gridRows: 0,
+          weights: [1, 1],
+        },
+      },
+    });
+
+    expect(repaired.groups.saved).toMatchObject({
+      layoutMode: "columns",
+      gridColumns: 12,
+      gridRows: 1,
+    });
   });
 
   it("logs persistence failure once while retaining memory state", () => {
@@ -347,20 +377,20 @@ describe("catalog reconciliation", () => {
 });
 
 describe("task-tree binding", () => {
-  it("keeps the root first and selects the recent eleven in tree order", () => {
+  it("keeps the root first and selects descendants through the fifty-pane cap", () => {
     const store = makeStore();
     const root = server("env", "root");
-    const entries = descendants(root, 13);
+    const entries = descendants(root, THREAD_SPLIT_MAX_PANES + 1);
     entries[0]!.updatedAt = 100;
     const result = store.getState().openTaskTree(root, entries);
     const group = store.getState().groups[result.groupId!]!;
 
     expect(result.omittedCount).toBe(2);
     expect(group.targetKeys[0]).toBe(root);
-    expect(group.targetKeys).toHaveLength(12);
+    expect(group.targetKeys).toHaveLength(THREAD_SPLIT_MAX_PANES);
     expect(group.targetKeys).toContain(entries[0]!.targetKey);
     expect(group.targetKeys).not.toContain(entries[1]!.targetKey);
-    expect(group.taskTreeBinding?.observedDescendantKeys).toHaveLength(13);
+    expect(group.taskTreeBinding?.observedDescendantKeys).toHaveLength(THREAD_SPLIT_MAX_PANES + 1);
   });
 
   it("converts the root's manual group and reuses an existing task-bound group", () => {
@@ -416,10 +446,10 @@ describe("task-tree binding", () => {
   it("observes descendants discovered while full without later silently filling a slot", () => {
     const store = makeStore();
     const root = server("env", "root");
-    const initial = descendants(root, 11);
+    const initial = descendants(root, THREAD_SPLIT_MAX_PANES - 1);
     const id = store.getState().openTaskTree(root, initial).groupId!;
-    const later = descendants(root, 12);
-    const omitted = later[11]!;
+    const later = descendants(root, THREAD_SPLIT_MAX_PANES);
+    const omitted = later[THREAD_SPLIT_MAX_PANES - 1]!;
 
     store.getState().reconcile(catalog([{ targetKey: root, treeOrder: 0 }, ...later]));
     expect(store.getState().groups[id]?.targetKeys).not.toContain(omitted.targetKey);

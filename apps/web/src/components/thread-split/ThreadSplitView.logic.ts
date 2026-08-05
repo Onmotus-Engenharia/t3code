@@ -63,3 +63,21 @@ export function selectOpenTerminalKeys(
 export function threadSplitSeparatorLabel(before: string, after: string): string {
   return `Resize panes between ${before} and ${after}`;
 }
+
+export function resolveShiftGridScrollDelta(deltaX: number, deltaY: number): number {
+  return Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY;
+}
+
+export function resolveVisibleGridRowRange(input: {
+  scrollTop: number;
+  paneHeight: number;
+  visibleRows: number;
+  totalRows: number;
+}): { start: number; end: number } {
+  if (input.totalRows <= 0) return { start: 0, end: 0 };
+  const start = Math.min(
+    input.totalRows - 1,
+    Math.max(0, Math.floor(input.scrollTop / Math.max(1, input.paneHeight))),
+  );
+  return { start: start + 1, end: Math.min(input.totalRows, start + input.visibleRows) };
+}

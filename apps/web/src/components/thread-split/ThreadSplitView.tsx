@@ -47,7 +47,9 @@ import {
   hasMeaningfulThreadSplitSizeChange,
   reconcileThreadSplitDrawerOwnerKeys,
   resolveThreadPaneAuxiliaryPanelPresentation,
+  resolveShiftGridScrollDelta,
   resolveThreadSplitRenderTargets,
+  resolveVisibleGridRowRange,
   selectOpenTerminalKeys,
   threadSplitSeparatorLabel,
 } from "./ThreadSplitView.logic";
@@ -331,18 +333,22 @@ function SplitSeparator({
 function LayoutControls({
   group,
   onLayout,
+  onGrid,
+  gridStatus,
   onRemove,
   onClose,
 }: {
   group: ThreadSplitGroup;
   onLayout: (mode: ThreadSplitLayoutMode) => void;
+  onGrid: (gridColumns: number, gridRows: number) => void;
+  gridStatus: string | null;
   onRemove: () => void;
   onClose: () => void;
 }) {
   return (
-    <div className="absolute inset-x-0 top-0 z-50 flex h-10 items-center justify-center border-b border-border/60 bg-background">
-      <div className="flex gap-1 rounded border border-border bg-background p-1">
-        {(["auto", "columns", "rows"] as const).map((mode) => (
+    <div className="absolute inset-x-0 top-0 z-50 flex h-10 items-center gap-2 border-b border-border/60 bg-background px-2">
+      <div className="flex min-w-0 items-center gap-1 rounded border border-border bg-background p-1">
+        {(["auto", "columns", "rows", "grid"] as const).map((mode) => (
           <button
             key={mode}
             type="button"
@@ -350,9 +356,47 @@ function LayoutControls({
             className="rounded px-2 py-1 text-xs aria-pressed:bg-accent"
             onClick={() => onLayout(mode)}
           >
-            {mode === "auto" ? "Auto" : mode === "columns" ? "Side by side" : "Top and bottom"}
+            {mode === "auto"
+              ? "Auto"
+              : mode === "columns"
+                ? "Side by side"
+                : mode === "rows"
+                  ? "Top and bottom"
+                  : "Grid"}
           </button>
         ))}
+        {group.layoutMode === "grid" ? (
+          <label className="flex items-center gap-1 px-1 text-xs text-muted-foreground">
+            <span>Columns × visible rows</span>
+            <select
+              aria-label="Grid columns"
+              className="rounded border border-border bg-background px-1 py-0.5 text-foreground"
+              value={group.gridColumns ?? 3}
+              onChange={(event) => onGrid(Number(event.currentTarget.value), group.gridRows ?? 3)}
+            >
+              {[1, 2, 3, 4, 5, 6].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <span>×</span>
+            <select
+              aria-label="Grid visible rows"
+              className="rounded border border-border bg-background px-1 py-0.5 text-foreground"
+              value={group.gridRows ?? 3}
+              onChange={(event) =>
+                onGrid(group.gridColumns ?? 3, Number(event.currentTarget.value))
+              }
+            >
+              {[1, 2, 3, 4, 5, 6].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <button type="button" className="rounded px-2 py-1 text-xs" onClick={onRemove}>
           Remove pane
         </button>
@@ -360,6 +404,9 @@ function LayoutControls({
           Close split
         </button>
       </div>
+      {gridStatus ? (
+        <span className="ml-auto text-xs text-muted-foreground">{gridStatus}</span>
+      ) : null}
     </div>
   );
 }
@@ -380,6 +427,9 @@ export function ThreadSplitView({
     [compact, group, routeTargetKey],
   );
   const [previewWeights, setPreviewWeights] = useState<readonly number[] | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const gridScrollFrameRef = useRef<number | null>(null);
+  const [gridScrollTop, setGridScrollTop] = useState(0);
   const splitToolbarHeight = group && !compact ? 40 : 0;
   const layout = group
     ? resolveThreadSplitLayout({
@@ -388,6 +438,8 @@ export function ThreadSplitView({
         width: size.width,
         height: Math.max(0, size.height - splitToolbarHeight),
         weights: previewWeights ?? group.weights,
+        gridColumns: group.gridColumns ?? 3,
+        gridRows: group.gridRows ?? 3,
       })
     : null;
 
@@ -398,6 +450,16 @@ export function ThreadSplitView({
     }
   }, [routeTargetKey]);
   useEffect(() => setPreviewWeights(null), [group?.id, group?.weights]);
+  useEffect(() => {
+    setGridScrollTop(0);
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [group?.id, group?.layoutMode]);
+  useEffect(
+    () => () => {
+      if (gridScrollFrameRef.current !== null) cancelAnimationFrame(gridScrollFrameRef.current);
+    },
+    [],
+  );
 
   const openTerminalKeys = useTerminalUiStateStore((terminalState) =>
     selectOpenTerminalKeys(terminalState.terminalUiStateByThreadKey),
@@ -458,13 +520,26 @@ export function ThreadSplitView({
     current.removeTarget(targetKey);
     if (nextTarget) focusTarget(nextTarget);
   };
+  const gridOverflows = Boolean(
+    group?.layoutMode === "grid" && layout && layout.overflowHeight > layout.height,
+  );
+  const gridStatus =
+    group?.layoutMode === "grid" && layout && gridOverflows
+      ? (() => {
+          const visibleRows = group.gridRows ?? 3;
+          const range = resolveVisibleGridRowRange({
+            scrollTop: gridScrollTop,
+            paneHeight: layout.height / visibleRows,
+            visibleRows,
+            totalRows: Math.ceil(group.targetKeys.length / (group.gridColumns ?? 3)),
+          });
+          return `Visible rows ${range.start}–${range.end} · Shift + scroll`;
+        })()
+      : null;
 
   return (
     <DiffWorkerPoolProvider>
-      <div
-        ref={containerRef}
-        className="relative min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-hidden"
-      >
+      <div ref={containerRef} className="relative min-h-0 min-w-0 flex-1">
         {group && compact ? (
           <label className="absolute inset-x-0 top-0 z-50 flex h-10 items-center gap-2 border-b border-border bg-background px-2 text-xs">
             <span>Split pane</span>
@@ -494,116 +569,144 @@ export function ThreadSplitView({
             onLayout={(layoutMode) =>
               threadSplitStore.getState().configureGroup(group.id, { layoutMode })
             }
+            onGrid={(gridColumns, gridRows) =>
+              threadSplitStore.getState().configureGroup(group.id, { gridColumns, gridRows })
+            }
+            gridStatus={gridStatus}
             onRemove={() => removeTarget(group.focusedTargetKey)}
             onClose={() => threadSplitStore.getState().closeGroup(group.id)}
           />
         ) : null}
         <div
-          className="relative min-h-0 min-w-0"
-          style={{
-            width: layout?.overflowWidth ?? "100%",
-            height: layout?.overflowHeight ?? "100%",
-            ...(compact ? { paddingTop: 40 } : splitToolbarHeight ? { marginTop: 40 } : {}),
+          ref={scrollRef}
+          className={`absolute inset-0 min-h-0 min-w-0 ${
+            group?.layoutMode === "grid" && !compact
+              ? "overflow-x-hidden overflow-y-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              : "overflow-x-auto overflow-y-hidden"
+          }`}
+          onWheelCapture={(event) => {
+            if (!gridOverflows || !event.shiftKey) return;
+            const delta = resolveShiftGridScrollDelta(event.deltaX, event.deltaY);
+            if (delta === 0) return;
+            event.preventDefault();
+            event.currentTarget.scrollTop += delta;
+          }}
+          onScroll={(event) => {
+            if (!gridOverflows || gridScrollFrameRef.current !== null) return;
+            const scrollTop = event.currentTarget.scrollTop;
+            gridScrollFrameRef.current = requestAnimationFrame(() => {
+              gridScrollFrameRef.current = null;
+              setGridScrollTop(scrollTop);
+            });
           }}
         >
-          {renderTargets.map((targetKey) => {
-            const placement =
-              group && !compact
-                ? (layout?.placements.find((entry) => entry.target === targetKey) ?? null)
-                : null;
-            const ref = targetThreadRef(targetKey);
-            const refKey = ref ? scopedThreadKey(ref) : null;
-            return (
-              <ThreadPaneHost
-                key={targetKey}
-                targetKey={targetKey}
-                placement={placement}
-                compact={compact}
-                focused={!group || group.focusedTargetKey === targetKey}
-                navigation={navigation}
-                onFocus={() => focusTarget(targetKey)}
-                threadKey={refKey}
-                publishPersistentTerminalRuntime={publishPersistentTerminalRuntime}
-                {...(forceExpandedMobileComposer ? { forceExpandedMobileComposer: true } : {})}
-              />
-            );
-          })}
-          {group && !compact
-            ? layout?.dividers
-                .filter((divider) => divider.draggable)
-                .map((divider) => (
-                  <SplitSeparator
-                    key={`${divider.axis}:${divider.dividerIndex}`}
-                    divider={divider}
-                    layoutExtent={
-                      divider.axis === "vertical" ? layout.overflowWidth : layout.overflowHeight
-                    }
-                    onResize={(desiredPosition, commit) => {
-                      if (divider.dividerIndex === null) return;
-                      const vertical = divider.axis === "vertical";
-                      const minimum = vertical ? 320 : 240;
-                      const next = resizeThreadSplitDividerWeights(
-                        previewWeights ?? group.weights,
-                        group.targetKeys,
-                        divider,
-                        desiredPosition,
-                        minimum,
-                      );
-                      setPreviewWeights(next);
-                      if (commit) {
-                        threadSplitStore.getState().configureGroup(group.id, { weights: next });
-                        setPreviewWeights(null);
+          <div
+            className="relative min-h-0 min-w-0"
+            style={{
+              width: layout?.overflowWidth ?? "100%",
+              height: layout?.overflowHeight ?? "100%",
+              ...(compact ? { paddingTop: 40 } : splitToolbarHeight ? { marginTop: 40 } : {}),
+            }}
+          >
+            {renderTargets.map((targetKey) => {
+              const placement =
+                group && !compact
+                  ? (layout?.placements.find((entry) => entry.target === targetKey) ?? null)
+                  : null;
+              const ref = targetThreadRef(targetKey);
+              const refKey = ref ? scopedThreadKey(ref) : null;
+              return (
+                <ThreadPaneHost
+                  key={targetKey}
+                  targetKey={targetKey}
+                  placement={placement}
+                  compact={compact}
+                  focused={!group || group.focusedTargetKey === targetKey}
+                  navigation={navigation}
+                  onFocus={() => focusTarget(targetKey)}
+                  threadKey={refKey}
+                  publishPersistentTerminalRuntime={publishPersistentTerminalRuntime}
+                  {...(forceExpandedMobileComposer ? { forceExpandedMobileComposer: true } : {})}
+                />
+              );
+            })}
+            {group && !compact
+              ? layout?.dividers
+                  .filter((divider) => divider.draggable)
+                  .map((divider) => (
+                    <SplitSeparator
+                      key={`${divider.axis}:${divider.dividerIndex}`}
+                      divider={divider}
+                      layoutExtent={
+                        divider.axis === "vertical" ? layout.overflowWidth : layout.overflowHeight
                       }
-                    }}
+                      onResize={(desiredPosition, commit) => {
+                        if (divider.dividerIndex === null) return;
+                        const vertical = divider.axis === "vertical";
+                        const minimum = vertical ? 320 : 240;
+                        const next = resizeThreadSplitDividerWeights(
+                          previewWeights ?? group.weights,
+                          group.targetKeys,
+                          divider,
+                          desiredPosition,
+                          minimum,
+                        );
+                        setPreviewWeights(next);
+                        if (commit) {
+                          threadSplitStore.getState().configureGroup(group.id, { weights: next });
+                          setPreviewWeights(null);
+                        }
+                      }}
+                    />
+                  ))
+              : null}
+            {drawerOwnerKeys.map((key) => {
+              const ref = parseScopedThreadKey(key);
+              if (!ref) return null;
+              const targetKey =
+                ownerTargets.find((candidate) => {
+                  const candidateRef = targetThreadRef(candidate);
+                  return candidateRef ? scopedThreadKey(candidateRef) === key : false;
+                }) ?? null;
+              const placement =
+                targetKey && group && !compact
+                  ? (layout?.placements.find((entry) => entry.target === targetKey) ?? null)
+                  : null;
+              const visible = renderedThreadKeys.includes(key);
+              const terminal = selectThreadTerminalUiState(
+                useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+                ref,
+              );
+              return (
+                <div
+                  key={key}
+                  data-terminal-drawer-owner={key}
+                  hidden={!visible}
+                  className="pointer-events-none absolute z-20 [&>*]:pointer-events-auto"
+                  style={
+                    placement
+                      ? {
+                          left: placement.x,
+                          top: placement.y,
+                          width: placement.width,
+                          height: placement.height,
+                        }
+                      : {
+                          inset: 0,
+                          ...(compact ? { top: 40 } : {}),
+                        }
+                  }
+                >
+                  <DrawerOwner
+                    threadRef={ref}
+                    visible={visible && terminal.terminalOpen}
+                    runtime={persistentTerminalRuntimeByThreadKey[key] ?? null}
                   />
-                ))
-            : null}
+                </div>
+              );
+            })}
+          </div>
         </div>
-        {drawerOwnerKeys.map((key) => {
-          const ref = parseScopedThreadKey(key);
-          if (!ref) return null;
-          const targetKey =
-            ownerTargets.find((candidate) => {
-              const candidateRef = targetThreadRef(candidate);
-              return candidateRef ? scopedThreadKey(candidateRef) === key : false;
-            }) ?? null;
-          const placement =
-            targetKey && group && !compact
-              ? (layout?.placements.find((entry) => entry.target === targetKey) ?? null)
-              : null;
-          const visible = renderedThreadKeys.includes(key);
-          const terminal = selectThreadTerminalUiState(
-            useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-            ref,
-          );
-          return (
-            <div
-              key={key}
-              data-terminal-drawer-owner={key}
-              hidden={!visible}
-              className="pointer-events-none absolute z-20 [&>*]:pointer-events-auto"
-              style={
-                placement
-                  ? {
-                      left: placement.x,
-                      top: placement.y + splitToolbarHeight,
-                      width: placement.width,
-                      height: placement.height,
-                    }
-                  : {
-                      inset: 0,
-                      ...(compact ? { top: 40 } : splitToolbarHeight ? { top: 40 } : {}),
-                    }
-              }
-            >
-              <DrawerOwner
-                threadRef={ref}
-                visible={visible && terminal.terminalOpen}
-                runtime={persistentTerminalRuntimeByThreadKey[key] ?? null}
-              />
-            </div>
-          );
-        })}
       </div>
     </DiffWorkerPoolProvider>
   );

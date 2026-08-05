@@ -1348,7 +1348,7 @@ function OpenCommandPaletteDialog(props: {
         if (result && result.omittedCount > 0) {
           toastManager.add({
             type: "info",
-            title: "Task split view limited to 12 panes",
+            title: `Task split view limited to ${THREAD_SPLIT_MAX_PANES} panes`,
             description: `${result.omittedCount} descendant${
               result.omittedCount === 1 ? "" : "s"
             } remain available to add.`,

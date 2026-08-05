@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   createThreadSplitStore,
+  THREAD_SPLIT_MAX_PANES,
   type PersistedThreadSplitState,
   type ThreadSplitGroup,
   type ThreadSplitTargetKey,
@@ -74,10 +75,10 @@ describe("thread split drag coordination", () => {
     });
   });
 
-  it("rejects the thirteenth pane with concise feedback", () => {
+  it("rejects the fifty-first pane with concise feedback", () => {
     const full = group(
       "full",
-      Array.from({ length: 12 }, (_, index) => `${index}`),
+      Array.from({ length: THREAD_SPLIT_MAX_PANES }, (_, index) => `${index}`),
     );
     expect(
       resolveThreadSplitDrop(
@@ -88,7 +89,7 @@ describe("thread split drag coordination", () => {
     ).toEqual({
       accepted: false,
       reason: "full",
-      message: "Split views support up to 12 panes.",
+      message: `Split views support up to ${THREAD_SPLIT_MAX_PANES} panes.`,
     });
   });
 

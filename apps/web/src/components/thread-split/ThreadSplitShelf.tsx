@@ -43,6 +43,7 @@ const layoutCopy: Record<ThreadSplitLayoutMode, { label: string; icon: typeof La
   auto: { label: "Auto layout", icon: LayoutGridIcon },
   columns: { label: "Side by side", icon: Columns2Icon },
   rows: { label: "Top and bottom", icon: Rows2Icon },
+  grid: { label: "Grid", icon: LayoutGridIcon },
 };
 
 export function ThreadSplitIndicator({ className }: { className?: string }) {
@@ -144,7 +145,7 @@ function ThreadSplitShelfCard({
             <MoreHorizontalIcon aria-hidden className="size-4" />
           </summary>
           <div className="absolute end-0 z-50 mt-1 w-44 rounded-lg border bg-popover p-1 text-popover-foreground shadow-md">
-            {(["auto", "columns", "rows"] as const).map((mode) => {
+            {(["auto", "columns", "rows", "grid"] as const).map((mode) => {
               const item = layoutCopy[mode];
               const Icon = item.icon;
               return (

@@ -124,6 +124,7 @@ import {
 import { useThreadNavigation } from "../threadSplitNavigation";
 import {
   getThreadSplitGroupForTarget,
+  THREAD_SPLIT_MAX_PANES,
   threadSplitStore,
   type ThreadSplitCatalogThread,
   type ThreadSplitTargetKey,
@@ -1908,7 +1909,7 @@ export default function SidebarV2() {
       if (result.omittedCount > 0) {
         toastManager.add({
           type: "info",
-          title: `Opened 12 of ${descendants.length + 1} task threads`,
+          title: `Opened ${THREAD_SPLIT_MAX_PANES} of ${descendants.length + 1} task threads`,
           description: `${result.omittedCount} descendants remain available from the split view.`,
         });
       }
@@ -2454,7 +2455,7 @@ export default function SidebarV2() {
                           {
                             id: "open-in-current-split-view",
                             label: "Open in current split view",
-                            disabled: activeSplitGroup.targetKeys.length >= 12,
+                            disabled: activeSplitGroup.targetKeys.length >= THREAD_SPLIT_MAX_PANES,
                           },
                         ]
                       : []),
@@ -2842,7 +2843,10 @@ export default function SidebarV2() {
       const state = threadSplitStore.getState();
       const group = state.groups[groupId];
       if (!group) return;
-      const available = targetKeys.slice(0, Math.max(0, 12 - group.targetKeys.length));
+      const available = targetKeys.slice(
+        0,
+        Math.max(0, THREAD_SPLIT_MAX_PANES - group.targetKeys.length),
+      );
       state.openTargets(available, { groupId, mode: "add" });
     },
     [],

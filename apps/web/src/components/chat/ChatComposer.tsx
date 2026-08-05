@@ -105,6 +105,12 @@ import {
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import {
+  type ComposerCollapseOverride,
+  getCollapsedComposerContentSummary,
+  resolveComposerCollapsed,
+  shouldAutoCollapseComposer,
+} from "./composerCollapse";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
@@ -175,6 +181,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
   BotIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CircleAlertIcon,
   ListTodoIcon,
   PencilRulerIcon,
@@ -278,6 +286,24 @@ const terminalContextIdListsEqual = (
 
 function isInsideComposerFloatingLayer(element: Element): boolean {
   return element.closest(COMPOSER_FLOATING_LAYER_SELECTOR) !== null;
+}
+
+function readComposerCollapseOverride(key: string): ComposerCollapseOverride | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = window.sessionStorage.getItem(key);
+    return value === "expanded" || value === "collapsed" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistComposerCollapseOverride(key: string, value: ComposerCollapseOverride): void {
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // Composer presentation preferences must never block the chat surface.
+  }
 }
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
@@ -1021,6 +1047,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [threadPaneHeight, setThreadPaneHeight] = useState<number | null>(null);
+  const composerCollapseStorageKey = `t3:composer-collapse:${environmentId}:${routeKind}:${activeThreadId ?? draftId ?? "new"}`;
+  const [composerCollapseOverrideState, setComposerCollapseOverrideState] = useState<{
+    key: string;
+    value: ComposerCollapseOverride | null;
+  }>(() => ({
+    key: composerCollapseStorageKey,
+    value: readComposerCollapseOverride(composerCollapseStorageKey),
+  }));
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
@@ -1030,6 +1065,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
+  const composerCollapseOverride =
+    composerCollapseOverrideState.key === composerCollapseStorageKey
+      ? composerCollapseOverrideState.value
+      : null;
+  const isComposerCollapsedDesktop =
+    !isMobileViewport &&
+    resolveComposerCollapsed({
+      autoCollapsed: shouldAutoCollapseComposer(threadPaneHeight, threadPaneHeight !== null),
+      manualOverride: composerCollapseOverride,
+    });
+  const isComposerCollapsed = isComposerCollapsedMobile || isComposerCollapsedDesktop;
 
   // ------------------------------------------------------------------
   // Refs
@@ -1054,6 +1100,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * thread) can still be stashed while an earlier encode is running.
    */
   const stashInFlightRef = useRef<Set<string>>(new Set());
+
+  const setComposerCollapseOverride = useCallback(
+    (value: ComposerCollapseOverride) => {
+      setComposerCollapseOverrideState({ key: composerCollapseStorageKey, value });
+      persistComposerCollapseOverride(composerCollapseStorageKey, value);
+    },
+    [composerCollapseStorageKey],
+  );
+
+  const toggleDesktopComposerCollapse = useCallback(() => {
+    setComposerCollapseOverride(isComposerCollapsedDesktop ? "expanded" : "collapsed");
+  }, [isComposerCollapsedDesktop, setComposerCollapseOverride]);
+
+  const expandDesktopComposerForFocus = useCallback(
+    (focus: () => void) => {
+      if (!isComposerCollapsedDesktop) {
+        focus();
+        return;
+      }
+      setComposerCollapseOverride("expanded");
+      window.requestAnimationFrame(focus);
+    },
+    [isComposerCollapsedDesktop, setComposerCollapseOverride],
+  );
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1198,6 +1268,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
+  const collapsedComposerContentSummary = getCollapsedComposerContentSummary({
+    prompt,
+    attachmentCount: composerImages.length,
+    contextCount:
+      composerTerminalContexts.length +
+      composerElementContexts.length +
+      composerPreviewAnnotations.length +
+      composerReviewComments.length,
+  });
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
@@ -1301,6 +1380,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
+  const desktopComposerCollapseControl = !isMobileViewport ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ComposerControl
+            type="button"
+            className="shrink-0 text-muted-foreground/70 hover:text-foreground/80"
+            aria-label={isComposerCollapsedDesktop ? "Expand composer" : "Collapse composer"}
+            onClick={toggleDesktopComposerCollapse}
+          />
+        }
+      >
+        <ComposerControlIcon icon={isComposerCollapsedDesktop ? ChevronUpIcon : ChevronDownIcon} />
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {isComposerCollapsedDesktop ? "Expand composer" : "Collapse composer"}
+      </TooltipPopup>
+    </Tooltip>
+  ) : null;
 
   // ------------------------------------------------------------------
   // Prompt helpers
@@ -1460,6 +1558,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
   }, [draftId, activeThreadId, promptRef]);
+
+  useEffect(() => {
+    setComposerCollapseOverrideState({
+      key: composerCollapseStorageKey,
+      value: readComposerCollapseOverride(composerCollapseStorageKey),
+    });
+  }, [composerCollapseStorageKey]);
+
+  useLayoutEffect(() => {
+    const composerForm = composerFormRef.current;
+    const threadPane = composerForm?.closest<HTMLElement>("[data-thread-pane]") ?? null;
+    if (!threadPane) {
+      setThreadPaneHeight(null);
+      return;
+    }
+
+    const updatePaneHeight = () => {
+      const nextHeight = threadPane.clientHeight;
+      setThreadPaneHeight((previous) => (previous === nextHeight ? previous : nextHeight));
+    };
+
+    updatePaneHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updatePaneHeight);
+    observer.observe(threadPane);
+    return () => observer.disconnect();
+  }, [activeThreadId, draftId]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -2419,7 +2544,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const insertComposerTextAtEnd = (
     text: string,
-    options?: { ensureLeadingBoundary?: boolean },
+    options?: { ensureLeadingBoundary?: boolean; focus?: boolean },
   ): boolean => {
     if (
       text.length === 0 ||
@@ -2433,18 +2558,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const prompt = promptRef.current;
     const needsLeadingSpace =
       (options?.ensureLeadingBoundary ?? false) && prompt.length > 0 && !/\s$/.test(prompt);
-    return applyPromptReplacement(
+    const inserted = applyPromptReplacement(
       prompt.length,
       prompt.length,
       needsLeadingSpace ? ` ${text}` : text,
     );
+    if (inserted && options?.focus !== false) {
+      expandDesktopComposerForFocus(() => composerEditorRef.current?.focusAtEnd());
+    }
+    return inserted;
   };
 
   // File-tree drags land as mentions. Handled in the capture phase so the
   // editor never sees the drop; the load-bearing rules (native stop, "move"
   // effect, no eager focus) live in makeComposerMentionDragHandlers.
   const composerMentionDragHandlers = makeComposerMentionDragHandlers({
-    insertMentionAtEnd: (text) => insertComposerTextAtEnd(text, { ensureLeadingBoundary: true }),
+    insertMentionAtEnd: (text) =>
+      insertComposerTextAtEnd(text, { ensureLeadingBoundary: true, focus: false }),
     setDragActive: setIsDragOverComposer,
     onInsertRejected: () => {
       toastManager.add({
@@ -2534,10 +2664,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerRef,
     () => ({
       focusAtEnd: () => {
-        composerEditorRef.current?.focusAtEnd();
+        expandDesktopComposerForFocus(() => composerEditorRef.current?.focusAtEnd());
       },
       focusAt: (cursor: number) => {
-        composerEditorRef.current?.focusAt(cursor);
+        expandDesktopComposerForFocus(() => composerEditorRef.current?.focusAt(cursor));
       },
       insertTextAtEnd: insertComposerTextAtEnd,
       openModelPicker: () => {
@@ -2570,6 +2700,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       addTerminalContext: (selection: TerminalContextSelection) => {
         if (!activeThread) return;
+        if (isComposerCollapsedDesktop) {
+          setComposerCollapseOverride("expanded");
+        }
         const snapshot = composerEditorRef.current?.readSnapshot() ?? {
           value: promptRef.current,
           cursor: composerCursor,
@@ -2636,7 +2769,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       pendingUserInputs.length,
       projectSelectionRequired,
       applyPromptReplacement,
+      expandDesktopComposerForFocus,
       isComposerModelPickerOpen,
+      isComposerCollapsedDesktop,
       readComposerSnapshot,
       selectedModel,
       selectedModelOptionsForDispatch,
@@ -2645,6 +2780,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      setComposerCollapseOverride,
     ],
   );
 
@@ -2699,7 +2835,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             scheduleComposerCollapseCheck();
           }}
         >
-          {!isComposerCollapsedMobile &&
+          {!isComposerCollapsed &&
             (activePendingApproval ? (
               <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                 <ComposerPendingApprovalPanel
@@ -2727,7 +2863,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </div>
             ) : null)}
 
-          {isComposerCollapsedMobile && activePendingApproval ? (
+          {isComposerCollapsed && activePendingApproval ? (
             <div
               className="rounded-t-[19px] border-b border-border/65 bg-muted/20"
               data-chat-composer-collapsed-controls="true"
@@ -2744,7 +2880,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 />
               </div>
             </div>
-          ) : isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
+          ) : isComposerCollapsed && pendingUserInputs.length > 0 ? (
             <div
               className="rounded-t-[19px] border-b border-border/65 bg-muted/20"
               data-chat-composer-collapsed-controls="true"
@@ -2775,7 +2911,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       !activePendingProgress?.activeQuestion?.multiSelect && "px-3 py-2",
                     )}
                     onPointerDown={(event) => event.preventDefault()}
-                    onClick={expandMobileComposer}
+                    onClick={() => {
+                      if (isMobileViewport) {
+                        expandMobileComposer();
+                        return;
+                      }
+                      expandDesktopComposerForFocus(() => composerEditorRef.current?.focusAtEnd());
+                    }}
                     aria-label="Write custom answer"
                   >
                     {activePendingProgress?.customAnswer || "Write custom answer"}
@@ -2857,7 +2999,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             className={cn(
               "relative px-3 pb-2 sm:px-4",
               hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
-              isComposerCollapsedMobile && "hidden",
+              isComposerCollapsed && "hidden",
             )}
           >
             <ComposerStashBadge
@@ -2898,7 +3040,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </ComposerCommandMenuLayer>
             )}
 
-            {!isComposerCollapsedMobile &&
+            {!isComposerCollapsed &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerPreviewAnnotations.length > 0 && (
@@ -2916,7 +3058,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 />
               )}
 
-            {!isComposerCollapsedMobile &&
+            {!isComposerCollapsed &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerReviewComments.length > 0 && (
@@ -2929,7 +3071,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 />
               )}
 
-            {!isComposerCollapsedMobile &&
+            {!isComposerCollapsed &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerElementContexts.length > 0 && (
@@ -2942,7 +3084,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 />
               )}
 
-            {!isComposerCollapsedMobile &&
+            {!isComposerCollapsed &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
               composerImages.some(
@@ -3092,7 +3234,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
           {/* Bottom toolbar */}
           {isComposerCollapsedMobile ? null : activePendingApproval ? (
-            <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
+            <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
+              {desktopComposerCollapseControl}
               <ComposerPendingApprovalActions
                 requestId={activePendingApproval.requestId}
                 isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
@@ -3111,6 +3254,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {desktopComposerCollapseControl}
+                {isComposerCollapsedDesktop && collapsedComposerContentSummary ? (
+                  <span
+                    data-chat-composer-collapsed-content="true"
+                    className="shrink-0 text-muted-foreground text-xs"
+                    title={collapsedComposerContentSummary}
+                  >
+                    {collapsedComposerContentSummary}
+                  </span>
+                ) : null}
                 {noProviderAvailable ? (
                   <Button
                     type="button"

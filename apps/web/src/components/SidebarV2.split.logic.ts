@@ -1,4 +1,4 @@
-import type { ThreadSplitTargetKey } from "../threadSplitStore";
+import { THREAD_SPLIT_MAX_PANES, type ThreadSplitTargetKey } from "../threadSplitStore";
 
 export function resolveSidebarV2SplitSelection(
   orderedThreadKeys: readonly string[],
@@ -9,7 +9,7 @@ export function resolveSidebarV2SplitSelection(
     threadKeys,
     targetKeys: threadKeys.map((threadKey) => `server:${threadKey}` as ThreadSplitTargetKey),
     label: `Open in split view (${threadKeys.length})`,
-    disabled: threadKeys.length < 2 || threadKeys.length > 12,
+    disabled: threadKeys.length < 2 || threadKeys.length > THREAD_SPLIT_MAX_PANES,
   };
 }
 

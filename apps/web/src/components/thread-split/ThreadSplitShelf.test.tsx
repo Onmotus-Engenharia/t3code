@@ -45,6 +45,7 @@ describe("ThreadSplitShelf", () => {
     );
     expect(markup).toContain('data-active="true"');
     expect(markup).toContain('data-focused="true"');
+    expect(markup).toContain("Grid");
     expect(markup).toContain("Side by side · 2 panes");
     expect(markup).toContain("Top and bottom · 2 panes");
     expect(markup).toContain('aria-label="Focus First thread in split view, Running"');

@@ -3,10 +3,10 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 
 export const THREAD_SPLIT_STORAGE_KEY = "t3code:thread-splits:v1";
 export const THREAD_SPLIT_SCHEMA_VERSION = 1;
-export const THREAD_SPLIT_MAX_PANES = 12;
+export const THREAD_SPLIT_MAX_PANES = 50;
 
 export type ThreadSplitTargetKey = `server:${string}` | `draft:${string}`;
-export type ThreadSplitLayoutMode = "auto" | "columns" | "rows";
+export type ThreadSplitLayoutMode = "auto" | "columns" | "rows" | "grid";
 
 export interface ThreadSplitTaskTreeBinding {
   rootThreadKey: string;
@@ -19,6 +19,8 @@ export interface ThreadSplitGroup {
   targetKeys: ThreadSplitTargetKey[];
   focusedTargetKey: ThreadSplitTargetKey;
   layoutMode: ThreadSplitLayoutMode;
+  gridColumns?: number;
+  gridRows?: number;
   weights: number[];
   taskTreeBinding?: ThreadSplitTaskTreeBinding;
 }
@@ -54,6 +56,8 @@ export interface OpenTargetsOptions {
 
 export interface ConfigureGroupOptions {
   layoutMode?: ThreadSplitLayoutMode;
+  gridColumns?: number;
+  gridRows?: number;
   targetKeys?: readonly ThreadSplitTargetKey[];
   weights?: readonly number[];
 }
@@ -100,6 +104,10 @@ const EMPTY_STATE: PersistedThreadSplitState = {
   groups: {},
   activeGroupId: null,
 };
+const THREAD_SPLIT_GRID_DEFAULT_COLUMNS = 3;
+const THREAD_SPLIT_GRID_DEFAULT_ROWS = 3;
+const THREAD_SPLIT_GRID_MAX_COLUMNS = 12;
+const THREAD_SPLIT_GRID_MAX_ROWS = 12;
 let fallbackGroupIdSequence = 0;
 
 function uniqueTargets(values: readonly unknown[]): ThreadSplitTargetKey[] {
@@ -128,6 +136,12 @@ function normalizeWeights(values: readonly unknown[], count: number): number[] {
   const source = valid ? (values as readonly number[]) : Array.from({ length: count }, () => 1);
   const total = source.reduce((sum, value) => sum + value, 0);
   return source.map((value) => value / total);
+}
+
+function normalizeGridDimension(value: unknown, fallback: number, maximum: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(maximum, Math.max(1, Math.round(value)))
+    : fallback;
 }
 
 function normalizeBinding(value: unknown): ThreadSplitTaskTreeBinding | undefined {
@@ -166,7 +180,9 @@ function normalizeGroup(
     ? (candidate.focusedTargetKey as ThreadSplitTargetKey)
     : targetKeys[0]!;
   const layoutMode: ThreadSplitLayoutMode =
-    candidate.layoutMode === "columns" || candidate.layoutMode === "rows"
+    candidate.layoutMode === "columns" ||
+    candidate.layoutMode === "rows" ||
+    candidate.layoutMode === "grid"
       ? candidate.layoutMode
       : "auto";
   const taskTreeBinding = normalizeBinding(candidate.taskTreeBinding);
@@ -175,6 +191,16 @@ function normalizeGroup(
     targetKeys,
     focusedTargetKey,
     layoutMode,
+    gridColumns: normalizeGridDimension(
+      candidate.gridColumns,
+      THREAD_SPLIT_GRID_DEFAULT_COLUMNS,
+      THREAD_SPLIT_GRID_MAX_COLUMNS,
+    ),
+    gridRows: normalizeGridDimension(
+      candidate.gridRows,
+      THREAD_SPLIT_GRID_DEFAULT_ROWS,
+      THREAD_SPLIT_GRID_MAX_ROWS,
+    ),
     weights: normalizeWeights(
       Array.isArray(candidate.weights) ? candidate.weights : [],
       targetKeys.length,
@@ -361,6 +387,8 @@ export function createThreadSplitStore(
               targetKeys: [],
               focusedTargetKey: targets[0]!,
               layoutMode: "auto",
+              gridColumns: THREAD_SPLIT_GRID_DEFAULT_COLUMNS,
+              gridRows: THREAD_SPLIT_GRID_DEFAULT_ROWS,
               weights: [],
             };
           }
@@ -413,32 +441,44 @@ export function createThreadSplitStore(
           value.rootThreadKey === rootThreadKey &&
           value.targetKey !== rootTargetKey,
       );
+      const rootOwner = owningGroupId(get().groups, rootTargetKey);
+      const owner = rootOwner ? get().groups[rootOwner] : undefined;
+      const selectableDescendants = owner
+        ? descendants.filter((entry) => !owner.targetKeys.includes(entry.targetKey))
+        : descendants;
+      const descendantLimit = Math.max(0, THREAD_SPLIT_MAX_PANES - (owner?.targetKeys.length ?? 1));
       const selected =
-        descendants.length <= 11
-          ? [...descendants].sort((a, b) => a.treeOrder - b.treeOrder)
-          : [...descendants]
+        selectableDescendants.length <= descendantLimit
+          ? [...selectableDescendants].sort((a, b) => a.treeOrder - b.treeOrder)
+          : [...selectableDescendants]
               .sort((a, b) => {
                 const time = (value: string | number | null | undefined) =>
                   typeof value === "number" ? value : Date.parse(value ?? "") || 0;
                 return time(b.updatedAt) - time(a.updatedAt);
               })
-              .slice(0, 11)
+              .slice(0, descendantLimit)
               .sort((a, b) => a.treeOrder - b.treeOrder);
       const existing = Object.values(get().groups).find(
         (group) => group.taskTreeBinding?.rootThreadKey === rootThreadKey,
       );
       if (existing) {
         get().focusTarget(rootTargetKey);
-        return { groupId: existing.id, omittedCount: Math.max(0, descendants.length - 11) };
+        return {
+          groupId: existing.id,
+          omittedCount: Math.max(0, selectableDescendants.length - descendantLimit),
+        };
       }
-      const rootOwner = owningGroupId(get().groups, rootTargetKey);
       const groupId =
         rootOwner ??
         get().openTargets([rootTargetKey, ...selected.map((entry) => entry.targetKey)], {
           mode: "new-group",
           focusTargetKey: rootTargetKey,
         });
-      if (!groupId) return { groupId: null, omittedCount: Math.max(0, descendants.length - 11) };
+      if (!groupId)
+        return {
+          groupId: null,
+          omittedCount: Math.max(0, selectableDescendants.length - descendantLimit),
+        };
       if (rootOwner) {
         get().openTargets(
           selected.map((entry) => entry.targetKey),
@@ -474,7 +514,10 @@ export function createThreadSplitStore(
           },
         },
       }));
-      return { groupId, omittedCount: Math.max(0, descendants.length - 11) };
+      return {
+        groupId,
+        omittedCount: Math.max(0, selectableDescendants.length - descendantLimit),
+      };
     },
 
     focusTarget(targetKey) {
@@ -559,6 +602,16 @@ export function createThreadSplitStore(
               targetKeys,
               weights: normalizeWeights(weights, targetKeys.length),
               layoutMode: configuration.layoutMode ?? group.layoutMode,
+              gridColumns: normalizeGridDimension(
+                configuration.gridColumns ?? group.gridColumns,
+                THREAD_SPLIT_GRID_DEFAULT_COLUMNS,
+                THREAD_SPLIT_GRID_MAX_COLUMNS,
+              ),
+              gridRows: normalizeGridDimension(
+                configuration.gridRows ?? group.gridRows,
+                THREAD_SPLIT_GRID_DEFAULT_ROWS,
+                THREAD_SPLIT_GRID_MAX_ROWS,
+              ),
             },
           },
         };

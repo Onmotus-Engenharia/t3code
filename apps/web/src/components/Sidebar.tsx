@@ -139,6 +139,7 @@ import { useThreadNavigation } from "../threadSplitNavigation";
 import {
   getAvailableTaskDescendants,
   getThreadSplitGroupForTarget,
+  THREAD_SPLIT_MAX_PANES,
   threadSplitStore,
   type ThreadSplitCatalogThread,
   type ThreadSplitTargetKey,
@@ -1905,7 +1906,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           {
             id: "open-in-split",
             label: `Open in split view (${count})`,
-            disabled: selectedThreadEntries.length < 2 || selectedThreadEntries.length > 12,
+            disabled:
+              selectedThreadEntries.length < 2 ||
+              selectedThreadEntries.length > THREAD_SPLIT_MAX_PANES,
           },
           ...buildMultiSelectThreadContextMenuItems({ count, hasRunningThread }),
         ],
@@ -2331,11 +2334,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
       if (clicked === "open-in-current-split" && splitState.activeGroupId) {
-        if (splitState.groups[splitState.activeGroupId]?.targetKeys.length === 12) {
+        const activeSplitGroup = splitState.groups[splitState.activeGroupId];
+        if (activeSplitGroup && activeSplitGroup.targetKeys.length >= THREAD_SPLIT_MAX_PANES) {
           toastManager.add({
             type: "error",
             title: "Split view is full",
-            description: "Split views support up to 12 panes.",
+            description: `Split views support up to ${THREAD_SPLIT_MAX_PANES} panes.`,
           });
           return;
         }
@@ -2360,7 +2364,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (result.omittedCount > 0) {
           toastManager.add({
             type: "info",
-            title: "Task split view limited to 12 panes",
+            title: `Task split view limited to ${THREAD_SPLIT_MAX_PANES} panes`,
             description: `${result.omittedCount} descendant${result.omittedCount === 1 ? "" : "s"} remain available to add.`,
           });
         }
@@ -3179,11 +3183,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     async (groupId: string, candidates: readonly ThreadSplitTargetKey[]) => {
       const api = readLocalApi();
       if (!api || candidates.length === 0) return;
-      if (threadSplitStore.getState().groups[groupId]?.targetKeys.length === 12) {
+      const group = threadSplitStore.getState().groups[groupId];
+      if (group && group.targetKeys.length >= THREAD_SPLIT_MAX_PANES) {
         toastManager.add({
           type: "error",
           title: "Split view is full",
-          description: "Split views support up to 12 panes.",
+          description: `Split views support up to ${THREAD_SPLIT_MAX_PANES} panes.`,
         });
         return;
       }

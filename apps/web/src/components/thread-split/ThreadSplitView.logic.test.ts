@@ -5,7 +5,9 @@ import {
   hasMeaningfulThreadSplitSizeChange,
   reconcileThreadSplitDrawerOwnerKeys,
   resolveThreadPaneAuxiliaryPanelPresentation,
+  resolveShiftGridScrollDelta,
   resolveThreadSplitRenderTargets,
+  resolveVisibleGridRowRange,
   selectOpenTerminalKeys,
   threadSplitSeparatorLabel,
 } from "./ThreadSplitView.logic";
@@ -89,5 +91,17 @@ describe("ThreadSplitView logic", () => {
     expect(threadSplitSeparatorLabel(keys[0]!, keys[1]!)).toBe(
       "Resize panes between server:env:a and server:env:b",
     );
+  });
+
+  it("uses the dominant Shift-wheel axis for grid scrolling", () => {
+    expect(resolveShiftGridScrollDelta(48, 12)).toBe(48);
+    expect(resolveShiftGridScrollDelta(12, 48)).toBe(48);
+    expect(resolveShiftGridScrollDelta(-36, 8)).toBe(-36);
+  });
+
+  it("reports the visible grid row range without snapping", () => {
+    expect(
+      resolveVisibleGridRowRange({ scrollTop: 301, paneHeight: 300, visibleRows: 3, totalRows: 4 }),
+    ).toEqual({ start: 2, end: 4 });
   });
 });

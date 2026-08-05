@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { THREAD_SPLIT_MAX_PANES } from "../threadSplitStore";
 import {
   resolveSidebarV2SingleSplitActionIds,
   resolveSidebarV2SplitSelection,
@@ -13,8 +14,10 @@ describe("SidebarV2 split integration logic", () => {
       disabled: false,
     });
     expect(resolveSidebarV2SplitSelection(["a"], new Set(["a"])).disabled).toBe(true);
-    const thirteen = Array.from({ length: 13 }, (_, index) => String(index));
-    expect(resolveSidebarV2SplitSelection(thirteen, new Set(thirteen)).disabled).toBe(true);
+    const overLimit = Array.from({ length: THREAD_SPLIT_MAX_PANES + 1 }, (_, index) =>
+      String(index),
+    );
+    expect(resolveSidebarV2SplitSelection(overLimit, new Set(overLimit)).disabled).toBe(true);
   });
 
   it("offers grouped, ungrouped, and task-tree alternatives contextually", () => {

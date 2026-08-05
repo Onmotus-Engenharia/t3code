@@ -14,7 +14,7 @@ You can manage split views from several places:
 - Drag one thread onto another, or drag a thread into an existing split view.
 - Open a thread's context menu to start a split with the current thread, add it to the current
   split, focus it in its existing split, or remove it.
-- Select 2–12 actionable thread rows and choose **Open in split view**.
+- Select 2–50 actionable thread rows and choose **Open in split view**.
 - Use the command palette to split a task tree, add threads, remove the focused pane, close the
   split, change its layout, or focus the previous or next pane.
 - Use a pane's remove control or the focused pane's split-view controls.
@@ -31,12 +31,15 @@ A thread can belong to only one split group, so adding it to another group moves
 
 ## Layout and Resizing
 
-Each group supports three layouts:
+Each group supports four layouts:
 
 - **Auto** chooses a balanced arrangement for the available workspace and keeps every pane
   visible. It does not reorder panes when focus changes.
 - **Side by side** places panes in columns.
 - **Top and bottom** places panes in rows.
+- **Grid** uses a configurable number of columns and visible rows. New grid layouts start at
+  3 × 3. The selector means columns × visible rows, so 12 threads at 3 × 3 occupy three columns
+  and four total rows.
 
 Side-by-side and top-and-bottom layouts have accessible dividers. Drag a divider to resize adjacent
 panes. With the divider focused, use an arrow key for a 5% adjustment or Shift+Arrow for 10%.
@@ -44,12 +47,25 @@ Manual layouts keep panes at least 320 pixels wide or 240 pixels tall and scroll
 chosen direction when they cannot all fit. Auto layout stays balanced and has no draggable
 dividers.
 
+When a grid has more rows than fit, it scrolls vertically. Its scrollbar is hidden and it does not
+snap between rows: use Shift+scroll (including a trackpad gesture whose main movement is horizontal)
+to move the outer grid. Regular scrolling remains in the thread beneath the pointer. The grid toolbar
+shows the currently visible row range when there is overflow.
+
 When the usable web workspace is narrower than 900×560, the group is preserved but only its
 focused pane is mounted. A compact switcher above the pane moves between members. The full layout
 returns automatically when space becomes available.
 
 Native mobile clients remain single-pane. They can open the underlying threads, but they do not
 show a split group as simultaneous panes.
+
+## Composer in Split Panes
+
+On web and desktop, a composer starts open. Use the bottom-left chevron to collapse or expand it.
+When a split pane is short, its composer may collapse automatically; an explicit open or closed
+choice wins over that automatic behavior. The compact composer keeps provider and runtime controls,
+context information, send or stop actions, and the thread's branch or worktree controls available.
+The editor and attachment or context detail stay hidden until the composer is expanded.
 
 ## Focus and Navigation
 
@@ -67,7 +83,7 @@ different client opens the thread normally because split-view state does not syn
 ## Task-Tree Split Views
 
 Choose **Split task tree** on a task root to create or open a task-bound group. The root appears
-first, followed by up to 11 descendants. For a tree larger than 12 threads, T3 Code chooses the 11
+first, followed by up to 49 descendants. For a tree larger than 50 threads, T3 Code chooses the 49
 most recently updated descendants and keeps their task-tree order.
 
 If that root already has a task-bound group, the action opens it. If the root is in a normal split
@@ -87,7 +103,7 @@ turn, context, or siblings.
 
 ## Limits and Reverse Actions
 
-A split group contains 2–12 panes. It can include server threads and drafts from different projects
+A split group contains 2–50 panes. It can include server threads and drafts from different projects
 or environments.
 
 - **Remove from split** removes only that pane.

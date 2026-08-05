@@ -5,7 +5,7 @@ export const THREAD_SPLIT_MIN_HEIGHT = 240;
 export const THREAD_SPLIT_COMPACT_WIDTH = 900;
 export const THREAD_SPLIT_COMPACT_HEIGHT = 560;
 
-export type ThreadSplitLayoutMode = "auto" | "columns" | "rows";
+export type ThreadSplitLayoutMode = "auto" | "columns" | "rows" | "grid";
 export type ThreadSplitAxis = "horizontal" | "vertical";
 
 export interface ThreadSplitPlacement<T extends string = string> {
@@ -60,6 +60,23 @@ export interface ResolveThreadSplitLayoutInput<T extends string = string> {
   width: number;
   height: number;
   weights?: readonly number[];
+  gridColumns?: number;
+  gridRows?: number;
+}
+
+export const THREAD_SPLIT_GRID_DEFAULT_COLUMNS = 3;
+export const THREAD_SPLIT_GRID_DEFAULT_ROWS = 3;
+export const THREAD_SPLIT_GRID_MAX_COLUMNS = 12;
+export const THREAD_SPLIT_GRID_MAX_ROWS = 12;
+
+export function normalizeThreadSplitGridDimension(
+  value: unknown,
+  fallback: number,
+  maximum: number,
+): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(maximum, Math.max(1, Math.round(value)))
+    : fallback;
 }
 
 const finiteSize = (value: number) => (Number.isFinite(value) ? Math.max(0, value) : 0);
@@ -353,6 +370,8 @@ export function resolveThreadSplitLayout<T extends string>({
   width: inputWidth,
   height: inputHeight,
   weights: inputWeights,
+  gridColumns: inputGridColumns,
+  gridRows: inputGridRows,
 }: ResolveThreadSplitLayoutInput<T>): ThreadSplitLayout<T> {
   const width = finiteSize(inputWidth);
   const height = finiteSize(inputHeight);
@@ -368,6 +387,55 @@ export function resolveThreadSplitLayout<T extends string>({
       overflowHeight: height,
       bands: [],
       placements: [],
+      dividers: [],
+      weights,
+    };
+  }
+
+  if (mode === "grid") {
+    const gridColumns = normalizeThreadSplitGridDimension(
+      inputGridColumns,
+      THREAD_SPLIT_GRID_DEFAULT_COLUMNS,
+      THREAD_SPLIT_GRID_MAX_COLUMNS,
+    );
+    const gridRows = normalizeThreadSplitGridDimension(
+      inputGridRows,
+      THREAD_SPLIT_GRID_DEFAULT_ROWS,
+      THREAD_SPLIT_GRID_MAX_ROWS,
+    );
+    const totalRows = Math.ceil(targets.length / gridColumns);
+    const paneWidth = width / gridColumns;
+    const paneHeight = height / gridRows;
+    const overflowHeight = Math.max(height, totalRows * paneHeight);
+    const placements = targets.map((target, index) => {
+      const row = Math.floor(index / gridColumns);
+      const column = index % gridColumns;
+      return {
+        target,
+        bandIndex: row,
+        indexInBand: column,
+        x: column * paneWidth,
+        y: row * paneHeight,
+        width: paneWidth,
+        height: paneHeight,
+      };
+    });
+    return {
+      mode,
+      orientation: "row-bands",
+      width,
+      height,
+      overflowWidth: width,
+      overflowHeight,
+      bands: Array.from({ length: totalRows }, (_, index) => ({
+        index,
+        targets: targets.slice(index * gridColumns, (index + 1) * gridColumns),
+        x: 0,
+        y: index * paneHeight,
+        width,
+        height: paneHeight,
+      })),
+      placements,
       dividers: [],
       weights,
     };

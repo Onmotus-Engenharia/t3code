@@ -142,8 +142,8 @@ describe("resolveThreadSplitLayout auto mode", () => {
     expect(resizedBands.placements.slice(1).map(({ width }) => width)).toEqual([600, 600]);
   });
 
-  it("covers every pane count through twelve without overlap or omissions", () => {
-    for (let count = 2; count <= 12; count += 1) {
+  it("covers every pane count through fifty without overlap or omissions", () => {
+    for (let count = 2; count <= 50; count += 1) {
       const orderedTargets = targets(count);
       const layout = resolveThreadSplitLayout({
         targets: orderedTargets,
@@ -209,6 +209,32 @@ describe("isCompactThreadSplitWorkspace", () => {
 });
 
 describe("resolveThreadSplitLayout manual modes", () => {
+  it("lays out grid cells as equal columns and visible rows with vertical overflow", () => {
+    const layout = resolveThreadSplitLayout({
+      targets: targets(12),
+      mode: "grid",
+      width: 1200,
+      height: 900,
+      gridColumns: 3,
+      gridRows: 3,
+    });
+
+    expect(layout.overflowWidth).toBe(1200);
+    expect(layout.overflowHeight).toBe(1200);
+    expect(layout.dividers).toEqual([]);
+    expect(layout.placements.slice(0, 9)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ x: 0, y: 0, width: 400, height: 300 }),
+        expect.objectContaining({ x: 800, y: 600, width: 400, height: 300 }),
+      ]),
+    );
+    expect(layout.placements.slice(9)).toEqual([
+      expect.objectContaining({ x: 0, y: 900, width: 400, height: 300 }),
+      expect.objectContaining({ x: 400, y: 900, width: 400, height: 300 }),
+      expect.objectContaining({ x: 800, y: 900, width: 400, height: 300 }),
+    ]);
+  });
+
   it("normalizes valid weights and repairs malformed weights", () => {
     expect(normalizeThreadSplitWeights([2, 3, 5], 3)).toEqual([0.2, 0.3, 0.5]);
     expect(normalizeThreadSplitWeights([1, Number.NaN, 2], 3)).toEqual([1 / 3, 1 / 3, 1 / 3]);
