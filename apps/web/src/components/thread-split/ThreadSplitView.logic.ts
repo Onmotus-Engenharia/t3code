@@ -1,3 +1,4 @@
+import type { ThreadSplitDivider, ThreadSplitLayoutMode } from "../../threadSplitLayout";
 import type { ThreadSplitGroup, ThreadSplitTargetKey } from "../../threadSplitStore";
 
 export const THREAD_SPLIT_MEANINGFUL_SIZE_DELTA = 8;
@@ -62,6 +63,13 @@ export function selectOpenTerminalKeys(
 
 export function threadSplitSeparatorLabel(before: string, after: string): string {
   return `Resize panes between ${before} and ${after}`;
+}
+
+export function threadSplitDividerRenderKey(
+  mode: ThreadSplitLayoutMode,
+  divider: ThreadSplitDivider,
+): string {
+  return `${mode}:${divider.axis}:${divider.before}:${divider.after}`;
 }
 
 export function resolveShiftGridScrollDelta(deltaX: number, deltaY: number): number {

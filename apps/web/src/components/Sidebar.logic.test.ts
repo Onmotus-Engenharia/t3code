@@ -164,6 +164,12 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
+
+  it("does not offer thread ID copying for a multi-selection", () => {
+    const items = buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: false });
+
+    expect(items).not.toContainEqual(expect.objectContaining({ id: "copy-thread-id" }));
+  });
 });
 
 describe("resolveSidebarStageBadgeLabel", () => {

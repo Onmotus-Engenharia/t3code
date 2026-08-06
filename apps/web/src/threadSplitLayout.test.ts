@@ -209,9 +209,9 @@ describe("isCompactThreadSplitWorkspace", () => {
 });
 
 describe("resolveThreadSplitLayout manual modes", () => {
-  it("lays out grid cells as equal columns and visible rows with vertical overflow", () => {
+  it("fills configured grid capacity with row-major vertical overflow", () => {
     const layout = resolveThreadSplitLayout({
-      targets: targets(12),
+      targets: targets(11),
       mode: "grid",
       width: 1200,
       height: 900,
@@ -221,7 +221,12 @@ describe("resolveThreadSplitLayout manual modes", () => {
 
     expect(layout.overflowWidth).toBe(1200);
     expect(layout.overflowHeight).toBe(1200);
-    expect(layout.dividers).toEqual([]);
+    expect(layout.bands.map((band) => band.targets)).toEqual([
+      ["thread-1", "thread-2", "thread-3"],
+      ["thread-4", "thread-5", "thread-6"],
+      ["thread-7", "thread-8", "thread-9"],
+      ["thread-10", "thread-11"],
+    ]);
     expect(layout.placements.slice(0, 9)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ x: 0, y: 0, width: 400, height: 300 }),
@@ -229,10 +234,41 @@ describe("resolveThreadSplitLayout manual modes", () => {
       ]),
     );
     expect(layout.placements.slice(9)).toEqual([
-      expect.objectContaining({ x: 0, y: 900, width: 400, height: 300 }),
-      expect.objectContaining({ x: 400, y: 900, width: 400, height: 300 }),
-      expect.objectContaining({ x: 800, y: 900, width: 400, height: 300 }),
+      expect.objectContaining({ x: 0, y: 900, width: 600, height: 300 }),
+      expect.objectContaining({ x: 600, y: 900, width: 600, height: 300 }),
     ]);
+    expect(layout.dividers.every((divider) => !divider.draggable)).toBe(true);
+    expect(layout.dividers.filter((divider) => divider.axis === "horizontal")).toHaveLength(3);
+  });
+
+  it("compacts grid rows before configured maxima are needed", () => {
+    const four = resolveThreadSplitLayout({
+      targets: targets(4),
+      mode: "grid",
+      width: 1200,
+      height: 900,
+      gridColumns: 3,
+      gridRows: 3,
+    });
+    expect(four.bands.map((band) => band.targets.length)).toEqual([2, 2]);
+    expect(four.placements.map(({ x, y, width, height }) => ({ x, y, width, height }))).toEqual([
+      { x: 0, y: 0, width: 600, height: 450 },
+      { x: 600, y: 0, width: 600, height: 450 },
+      { x: 0, y: 450, width: 600, height: 450 },
+      { x: 600, y: 450, width: 600, height: 450 },
+    ]);
+
+    const five = resolveThreadSplitLayout({
+      targets: targets(5),
+      mode: "grid",
+      width: 1200,
+      height: 900,
+      gridColumns: 3,
+      gridRows: 3,
+    });
+    expect(five.bands.map((band) => band.targets.length)).toEqual([2, 3]);
+    expect(five.placements.slice(0, 2).map(({ width }) => width)).toEqual([600, 600]);
+    expect(five.placements.slice(2).map(({ width }) => width)).toEqual([400, 400, 400]);
   });
 
   it("normalizes valid weights and repairs malformed weights", () => {

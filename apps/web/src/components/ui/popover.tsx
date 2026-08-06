@@ -37,12 +37,12 @@ function PopoverPopup({
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
 }) {
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal className="relative z-[60]">
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-[60] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none"
+        className="z-0 h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none"
         data-slot="popover-positioner"
         side={side}
         sideOffset={sideOffset}

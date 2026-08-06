@@ -86,7 +86,8 @@ then handles the ordinary `thread.turn.start` request.
 Each created thread persists:
 
 - `taskRelation`: parent thread, root thread, depth, workspace mode, and `createdBy: "agent"`;
-- `taskOrchestrationEnabled: false`, so permission never propagates automatically;
+- `taskOrchestrationEnabled`: enabled for depth-1 children and disabled for depth-2 children, so
+  permission propagates for one generation only;
 - `pinned`, which is also available to normal threads.
 
 Migration 035 stores the permission, relation JSON, indexed parent ID, and pin. Legacy events and
@@ -94,9 +95,9 @@ snapshots decode with disabled/null/unpinned defaults.
 
 ## Authorization and limits
 
-Root threads allow orchestration by default. Newly created child tasks remain disabled until the
-root enables an owned direct child with `t3_tasks.orchestration`. Calls made while disabled return
-`permission_denied`.
+Root threads allow orchestration by default. Newly created depth-1 child tasks also allow
+orchestration by default, so they can create the permitted depth-2 generation. Depth-2 tasks start
+disabled. Calls made while disabled return `permission_denied`.
 
 The service accepts only direct child tasks created by the calling orchestrator in the same project.
 Guessed IDs, the caller itself, ancestors, siblings, and unrelated threads return

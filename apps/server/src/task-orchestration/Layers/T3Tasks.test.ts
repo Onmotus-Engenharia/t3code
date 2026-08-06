@@ -15,6 +15,7 @@ import {
   ownsThread,
   resolveWorkspaceMode,
   selectOwnedTaskSummaries,
+  taskOrchestrationEnabledForChildDepth,
   validateCreateLimits,
   validateTaskLocation,
   validateTaskModelSelection,
@@ -54,6 +55,11 @@ const thread = (input: {
   }) as unknown as OrchestrationThread;
 
 describe("T3Tasks authorization and advertised limits", () => {
+  it("enables orchestration only for depth-one child models", () => {
+    NodeAssert.equal(taskOrchestrationEnabledForChildDepth(1), true);
+    NodeAssert.equal(taskOrchestrationEnabledForChildDepth(2), false);
+  });
+
   it("allows only direct children in the caller's project", () => {
     const caller = thread({ id: "child-a", rootThreadId: "root" });
     const direct = thread({

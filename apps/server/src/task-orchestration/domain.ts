@@ -105,6 +105,9 @@ export const taskRootId = (thread: OrchestrationThread): ThreadId =>
 export const createLimitForCaller = (caller: OrchestrationThread): number =>
   caller.taskRelation === null ? 10 : 4;
 
+export const taskOrchestrationEnabledForChildDepth = (childDepth: number): boolean =>
+  childDepth === 1;
+
 export const ownsThread = (caller: OrchestrationThread, target: OrchestrationThread): boolean =>
   target.taskRelation !== null &&
   target.taskRelation.parentThreadId === caller.id &&

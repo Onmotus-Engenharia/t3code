@@ -51,6 +51,7 @@ import {
   resolveThreadSplitRenderTargets,
   resolveVisibleGridRowRange,
   selectOpenTerminalKeys,
+  threadSplitDividerRenderKey,
   threadSplitSeparatorLabel,
 } from "./ThreadSplitView.logic";
 import { PersistentThreadTerminalDrawer } from "./PersistentThreadTerminalDrawer";
@@ -291,6 +292,29 @@ function SplitSeparator({
     separator.addEventListener("pointercancel", finish);
   };
   const vertical = divider.axis === "vertical";
+  if (!divider.draggable) {
+    return (
+      <div
+        aria-hidden
+        className="pointer-events-none absolute z-40 bg-border"
+        style={
+          vertical
+            ? {
+                left: divider.position,
+                top: divider.start,
+                width: 1,
+                height: divider.end - divider.start,
+              }
+            : {
+                top: divider.position,
+                left: divider.start,
+                width: divider.end - divider.start,
+                height: 1,
+              }
+        }
+      />
+    );
+  }
   return (
     <div
       role="separator"
@@ -526,12 +550,12 @@ export function ThreadSplitView({
   const gridStatus =
     group?.layoutMode === "grid" && layout && gridOverflows
       ? (() => {
-          const visibleRows = group.gridRows ?? 3;
+          const paneHeight = layout.placements[0]?.height ?? layout.height;
           const range = resolveVisibleGridRowRange({
             scrollTop: gridScrollTop,
-            paneHeight: layout.height / visibleRows,
-            visibleRows,
-            totalRows: Math.ceil(group.targetKeys.length / (group.gridColumns ?? 3)),
+            paneHeight,
+            visibleRows: Math.max(1, Math.round(layout.height / Math.max(1, paneHeight))),
+            totalRows: layout.bands.length,
           });
           return `Visible rows ${range.start}–${range.end} · Shift + scroll`;
         })()
@@ -631,34 +655,32 @@ export function ThreadSplitView({
               );
             })}
             {group && !compact
-              ? layout?.dividers
-                  .filter((divider) => divider.draggable)
-                  .map((divider) => (
-                    <SplitSeparator
-                      key={`${divider.axis}:${divider.dividerIndex}`}
-                      divider={divider}
-                      layoutExtent={
-                        divider.axis === "vertical" ? layout.overflowWidth : layout.overflowHeight
+              ? layout?.dividers.map((divider) => (
+                  <SplitSeparator
+                    key={threadSplitDividerRenderKey(layout.mode, divider)}
+                    divider={divider}
+                    layoutExtent={
+                      divider.axis === "vertical" ? layout.overflowWidth : layout.overflowHeight
+                    }
+                    onResize={(desiredPosition, commit) => {
+                      if (divider.dividerIndex === null) return;
+                      const vertical = divider.axis === "vertical";
+                      const minimum = vertical ? 320 : 240;
+                      const next = resizeThreadSplitDividerWeights(
+                        previewWeights ?? group.weights,
+                        group.targetKeys,
+                        divider,
+                        desiredPosition,
+                        minimum,
+                      );
+                      setPreviewWeights(next);
+                      if (commit) {
+                        threadSplitStore.getState().configureGroup(group.id, { weights: next });
+                        setPreviewWeights(null);
                       }
-                      onResize={(desiredPosition, commit) => {
-                        if (divider.dividerIndex === null) return;
-                        const vertical = divider.axis === "vertical";
-                        const minimum = vertical ? 320 : 240;
-                        const next = resizeThreadSplitDividerWeights(
-                          previewWeights ?? group.weights,
-                          group.targetKeys,
-                          divider,
-                          desiredPosition,
-                          minimum,
-                        );
-                        setPreviewWeights(next);
-                        if (commit) {
-                          threadSplitStore.getState().configureGroup(group.id, { weights: next });
-                          setPreviewWeights(null);
-                        }
-                      }}
-                    />
-                  ))
+                    }}
+                  />
+                ))
               : null}
             {drawerOwnerKeys.map((key) => {
               const ref = parseScopedThreadKey(key);

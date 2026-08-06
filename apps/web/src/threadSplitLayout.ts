@@ -404,21 +404,70 @@ export function resolveThreadSplitLayout<T extends string>({
       THREAD_SPLIT_GRID_MAX_ROWS,
     );
     const totalRows = Math.ceil(targets.length / gridColumns);
-    const paneWidth = width / gridColumns;
-    const paneHeight = height / gridRows;
+    const overflows = totalRows > gridRows;
+    const counts = overflows
+      ? Array.from({ length: totalRows }, (_, index) =>
+          Math.min(gridColumns, targets.length - index * gridColumns),
+        )
+      : bandCounts(targets.length, totalRows);
+    const visibleRows = overflows ? gridRows : totalRows;
+    const paneHeight = height / visibleRows;
     const overflowHeight = Math.max(height, totalRows * paneHeight);
-    const placements = targets.map((target, index) => {
-      const row = Math.floor(index / gridColumns);
-      const column = index % gridColumns;
-      return {
-        target,
-        bandIndex: row,
-        indexInBand: column,
-        x: column * paneWidth,
-        y: row * paneHeight,
-        width: paneWidth,
-        height: paneHeight,
-      };
+    const bands: ThreadSplitBand<T>[] = [];
+    const placements: ThreadSplitPlacement<T>[] = [];
+    const dividers: ThreadSplitDivider<T>[] = [];
+    let targetIndex = 0;
+
+    counts.forEach((count, row) => {
+      const rowTargets = targets.slice(targetIndex, targetIndex + count);
+      const y = row * paneHeight;
+      const paneWidth = width / count;
+      const band = { index: row, targets: rowTargets, x: 0, y, width, height: paneHeight };
+      bands.push(band);
+
+      rowTargets.forEach((target, column) => {
+        const placement = {
+          target,
+          bandIndex: row,
+          indexInBand: column,
+          x: column * paneWidth,
+          y,
+          width: paneWidth,
+          height: paneHeight,
+        };
+        placements.push(placement);
+        if (column > 0) {
+          dividers.push({
+            axis: "vertical",
+            position: placement.x,
+            start: y,
+            end: y + paneHeight,
+            before: rowTargets[column - 1]!,
+            after: target,
+            dividerIndex: null,
+            draggable: false,
+            resizeGroups: [],
+            resizeStart: 0,
+            resizeExtent: 0,
+          });
+        }
+      });
+      if (row > 0) {
+        dividers.push({
+          axis: "horizontal",
+          position: y,
+          start: 0,
+          end: width,
+          before: bands[row - 1]!.targets.at(-1)!,
+          after: rowTargets[0]!,
+          dividerIndex: null,
+          draggable: false,
+          resizeGroups: [],
+          resizeStart: 0,
+          resizeExtent: 0,
+        });
+      }
+      targetIndex += count;
     });
     return {
       mode,
@@ -427,16 +476,9 @@ export function resolveThreadSplitLayout<T extends string>({
       height,
       overflowWidth: width,
       overflowHeight,
-      bands: Array.from({ length: totalRows }, (_, index) => ({
-        index,
-        targets: targets.slice(index * gridColumns, (index + 1) * gridColumns),
-        x: 0,
-        y: index * paneHeight,
-        width,
-        height: paneHeight,
-      })),
+      bands,
       placements,
-      dividers: [],
+      dividers,
       weights,
     };
   }

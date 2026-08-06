@@ -23,6 +23,7 @@ import {
   resolveWorkspaceMode,
   requiredString,
   taskRootId,
+  taskOrchestrationEnabledForChildDepth,
   validateCreateLimits,
   validateTaskLocation,
   validateTaskModelSelection,
@@ -133,7 +134,7 @@ export const executeCreate = Effect.fn("T3Tasks.executeCreate")(function* (input
       createdAt,
       updatedAt: createdAt,
       archivedAt: null,
-      taskOrchestrationEnabled: false,
+      taskOrchestrationEnabled: taskOrchestrationEnabledForChildDepth(childDepth),
       taskRelation: {
         parentThreadId: input.caller.id,
         rootThreadId: taskRootId(input.caller),

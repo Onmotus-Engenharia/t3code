@@ -16,6 +16,7 @@ const now = "2026-07-28T12:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 const parentThreadId = ThreadId.make("parent");
 const childThreadId = ThreadId.make("child");
+const grandchildThreadId = ThreadId.make("grandchild");
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
@@ -123,7 +124,7 @@ it.layer(NodeServices.layer)("task orchestration decider", (it) => {
     }),
   );
 
-  it.effect("creates an agent-owned child with permission and safe child defaults", () =>
+  it.effect("creates a depth-one agent-owned child with orchestration enabled", () =>
     Effect.gen(function* () {
       const event = yield* decideOrchestrationCommand({
         command: taskCreate(),
@@ -135,9 +136,46 @@ it.layer(NodeServices.layer)("task orchestration decider", (it) => {
       }
       expect(event.payload).toMatchObject({
         taskRelation: taskCreate().taskRelation,
-        taskOrchestrationEnabled: false,
+        taskOrchestrationEnabled: true,
         pinned: false,
       });
+    }),
+  );
+
+  it.effect("keeps orchestration disabled for a depth-two agent-owned child", () =>
+    Effect.gen(function* () {
+      const readModel = makeReadModel(true);
+      const child = {
+        ...readModel.threads[0]!,
+        id: childThreadId,
+        taskRelation: taskCreate().taskRelation,
+      };
+      const readModelWithChild = {
+        ...readModel,
+        threads: [...readModel.threads, child],
+      };
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          ...taskCreate({
+            parentThreadId: childThreadId,
+            rootThreadId: parentThreadId,
+            depth: 2,
+            workspaceMode: "shared",
+            createdBy: "agent",
+          }),
+          threadId: grandchildThreadId,
+        },
+        readModel: readModelWithChild,
+      });
+      expect(Array.isArray(event)).toBe(false);
+      if (
+        !("type" in event) ||
+        event.type !== "thread.created" ||
+        !("taskOrchestrationEnabled" in event.payload)
+      ) {
+        return yield* Effect.die("Expected one thread.created event");
+      }
+      expect(event.payload.taskOrchestrationEnabled).toBe(false);
     }),
   );
 

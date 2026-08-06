@@ -37,12 +37,12 @@ function MenuPopup({
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
 }) {
   return (
-    <MenuPrimitive.Portal>
+    <MenuPrimitive.Portal className="relative z-[60]">
       <MenuPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-[60]"
+        className="z-0"
         data-slot="menu-positioner"
         side={side}
         sideOffset={sideOffset}

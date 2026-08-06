@@ -9,6 +9,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
+import { taskOrchestrationEnabledForChildDepth } from "../task-orchestration/domain.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
@@ -457,7 +458,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
-          taskOrchestrationEnabled: false,
+          taskOrchestrationEnabled: taskOrchestrationEnabledForChildDepth(
+            command.taskRelation.depth,
+          ),
           taskRelation: command.taskRelation,
           pinned: false,
           createdAt: command.createdAt,

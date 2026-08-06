@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { resolveThreadSplitLayout } from "../../threadSplitLayout";
 import type { ThreadSplitGroup, ThreadSplitTargetKey } from "../../threadSplitStore";
 import {
   hasMeaningfulThreadSplitSizeChange,
@@ -9,6 +10,7 @@ import {
   resolveThreadSplitRenderTargets,
   resolveVisibleGridRowRange,
   selectOpenTerminalKeys,
+  threadSplitDividerRenderKey,
   threadSplitSeparatorLabel,
 } from "./ThreadSplitView.logic";
 
@@ -91,6 +93,38 @@ describe("ThreadSplitView logic", () => {
     expect(threadSplitSeparatorLabel(keys[0]!, keys[1]!)).toBe(
       "Resize panes between server:env:a and server:env:b",
     );
+  });
+
+  it("replaces every auto divider when switching to grid", () => {
+    const targets = [
+      "server:env:a",
+      "server:env:b",
+      "server:env:c",
+      "server:env:d",
+    ] as ThreadSplitTargetKey[];
+    const auto = resolveThreadSplitLayout({
+      targets,
+      mode: "auto",
+      width: 1600,
+      height: 900,
+    });
+    const grid = resolveThreadSplitLayout({
+      targets,
+      mode: "grid",
+      width: 1600,
+      height: 900,
+      gridColumns: 2,
+      gridRows: 2,
+    });
+    const autoKeys = auto.dividers.map((divider) =>
+      threadSplitDividerRenderKey(auto.mode, divider),
+    );
+    const gridKeys = grid.dividers.map((divider) =>
+      threadSplitDividerRenderKey(grid.mode, divider),
+    );
+
+    expect(new Set(autoKeys).size).toBe(autoKeys.length);
+    expect(gridKeys.every((key) => !autoKeys.includes(key))).toBe(true);
   });
 
   it("uses the dominant Shift-wheel axis for grid scrolling", () => {
