@@ -18,10 +18,22 @@ const AppPackageMetadata = Schema.Struct({
 });
 const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
+export class DesktopUserDataPathResolutionError extends Schema.TaggedErrorClass<DesktopUserDataPathResolutionError>()(
+  "DesktopUserDataPathResolutionError",
+  {
+    legacyPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to inspect legacy desktop user-data path at "${this.legacyPath}".`;
+  }
+}
+
 export class DesktopAppIdentity extends Context.Service<
   DesktopAppIdentity,
   {
-    readonly resolveUserDataPath: Effect.Effect<string>;
+    readonly resolveUserDataPath: Effect.Effect<string, DesktopUserDataPathResolutionError>;
     readonly configure: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppIdentity") {}
@@ -32,6 +44,27 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
     ? Option.some(trimmed.slice(0, COMMIT_HASH_DISPLAY_LENGTH).toLowerCase())
     : Option.none();
 };
+
+export const resolveUserDataPath = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const legacyPath = environment.path.join(
+    environment.appDataDirectory,
+    environment.legacyUserDataDirName,
+  );
+  const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DesktopUserDataPathResolutionError({
+          legacyPath,
+          cause,
+        }),
+    ),
+  );
+  return legacyPathExists
+    ? legacyPath
+    : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+}).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
 
 export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
@@ -78,9 +111,11 @@ export const make = Effect.gen(function* () {
     return commitHash;
   });
 
-  const resolveUserDataPath = Effect.succeed(
-    environment.path.join(environment.appDataDirectory, environment.userDataDirName),
-  ).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
+  const userDataPath = resolveUserDataPath.pipe(
+    Effect.provide(
+      yield* Effect.context<DesktopEnvironment.DesktopEnvironment | FileSystem.FileSystem>(),
+    ),
+  );
 
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
@@ -109,7 +144,7 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.appIdentity.configure"));
 
   return DesktopAppIdentity.of({
-    resolveUserDataPath,
+    resolveUserDataPath: userDataPath,
     configure,
   });
 });

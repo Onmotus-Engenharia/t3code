@@ -53,7 +53,6 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
         calls.setAboutPanelOptions.push(options);
       }),
     setAppUserModelId: () => Effect.void,
-    requestSingleInstanceLock: Effect.succeed(true),
     getAppMetrics: Effect.succeed([]),
     isDefaultProtocolClient: () => Effect.succeed(false),
     setAsDefaultProtocolClient: () => Effect.succeed(true),
@@ -64,6 +63,7 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
       }),
     appendCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
+    removeCommandLineSwitch: () => Effect.void,
     on: () => Effect.void,
   } satisfies ElectronApp.ElectronApp["Service"]);
 
@@ -140,7 +140,10 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/t3-code-orchestrator");
+        assert.equal(
+          userDataPath.replaceAll("\\", "/"),
+          "/Users/alice/Library/Application Support/t3-code-orchestrator",
+        );
       }),
     ),
   );

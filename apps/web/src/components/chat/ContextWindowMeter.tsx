@@ -53,7 +53,7 @@ export function ContextWindowMeter(props: {
   );
   const isOverloaded = normalizedPercentage > 90;
   const usageColor = isOverloaded
-    ? "var(--color-red-500)"
+    ? "var(--color-error)"
     : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
   const codexUsage = selectCodexUsageWindows(codexRateLimits);
   const showCodexUsage = codexUsage.fiveHour !== null || codexUsage.weekly !== null;
@@ -102,7 +102,7 @@ export function ContextWindowMeter(props: {
                   strokeLinecap="round"
                   strokeDasharray={circumference}
                   strokeDashoffset={dashOffset}
-                  className="transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none"
+                  className="transition-[stroke-dashoffset,stroke] duration-500 ease-out motion-reduce:transition-none"
                 />
               </svg>
             </span>
@@ -113,13 +113,14 @@ export function ContextWindowMeter(props: {
         tooltipStyle
         side="top"
         align="end"
-        className="dropdown-glass w-64 max-w-none border-0! bg-secondary! p-0 shadow-none! before:hidden"
+        viewportClassName="p-0"
+        className="w-64 max-w-none text-left whitespace-normal"
       >
-        <div className="flex flex-col gap-2 p-3">
+        <div className="flex flex-col gap-2 p-[var(--floating-content-inset)]">
           <div className="flex items-center justify-between gap-3">
             <div className="font-medium text-muted-foreground text-xs">Context Window</div>
             {usage.maxTokens !== null && usedPercentage ? (
-              <div className="text-[11px] tabular-nums text-muted-foreground/70">
+              <div className="text-secondary-label text-[11px] tabular-nums">
                 <span>{usedPercentage}</span>
                 <span className="mx-1">·</span>
                 <span>
@@ -128,7 +129,7 @@ export function ContextWindowMeter(props: {
                 </span>
               </div>
             ) : (
-              <div className="text-[11px] tabular-nums text-muted-foreground/70">
+              <div className="text-secondary-label text-[11px] tabular-nums">
                 {formatContextWindowTokens(usage.usedTokens)}
               </div>
             )}
@@ -150,8 +151,8 @@ export function ContextWindowMeter(props: {
           ) : null}
           {showTotalProcessed ? (
             <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
-              <span className="text-muted-foreground/60">Total processed</span>
-              <span className="font-medium tabular-nums text-muted-foreground/80">
+              <span className="text-secondary-label">Total processed</span>
+              <span className="font-medium tabular-nums text-secondary-label">
                 {formatContextWindowTokens(totalProcessedTokens)}
               </span>
             </div>
@@ -229,7 +230,7 @@ export function ContextWindowMeter(props: {
             </div>
           ) : null}
           {usage.compactsAutomatically ? (
-            <div className="mt-1 text-pretty text-[11px] font-medium text-muted-foreground/70">
+            <div className="mt-1 text-pretty text-secondary-label text-[11px] font-medium">
               {providerDisplayName ?? "It"} automatically compacts its context when needed.
             </div>
           ) : null}

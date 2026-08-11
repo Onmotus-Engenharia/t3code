@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import distribution from "../../../../distribution.json" with { type: "json" };
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
+import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 
 export interface MakeDesktopEnvironmentInput {
@@ -69,7 +70,11 @@ export class DesktopEnvironment extends Context.Service<
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
     readonly linuxWmClass: string;
+    readonly linuxApplicationsDir: string;
+    readonly appImagePath: Option.Option<string>;
     readonly userDataDirName: string;
+    /** Previous Electron-managed product-name directory, used for a one-time data migration. */
+    readonly legacyUserDataDirName: string;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
     readonly resolvePickFolderDefaultPath: (rawOptions: unknown) => Option.Option<string>;
@@ -148,9 +153,12 @@ const make = Effect.fn("desktop.environment.make")(function* (
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
   const configuredBaseDir = input.isPackaged ? config.orchestratorHome : config.t3Home;
-  const baseDir = Option.getOrElse(configuredBaseDir, () =>
-    path.join(homeDirectory, distribution.directories.base),
-  );
+  const baseDir = resolveDesktopBaseDir({
+    homeDirectory,
+    joinPath: path.join,
+    configuredBaseDir: Option.getOrUndefined(configuredBaseDir),
+    defaultBaseDirName: distribution.directories.base,
+  });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const branding = resolveDesktopAppBranding({
@@ -158,15 +166,24 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appVersion: input.appVersion,
   });
   const displayName = branding.displayName;
-  const stateDir = path.join(
+  const stateDir = resolveDesktopStateDir({
     baseDir,
-    isDevelopment && Option.isNone(configuredBaseDir)
-      ? distribution.directories.developmentState
-      : distribution.directories.state,
-  );
+    isDevelopment,
+    joinPath: path.join,
+    configuredBaseDir: Option.getOrUndefined(configuredBaseDir),
+    developmentStateDirName: distribution.directories.developmentState,
+    stateDirName: distribution.directories.state,
+  });
   const userDataDirName = isDevelopment
     ? `${distribution.directories.userData}-dev`
     : distribution.directories.userData;
+  const legacyUserDataDirName = isDevelopment
+    ? `${distribution.displayName} (Dev)`
+    : distribution.displayName;
+  const linuxApplicationsDir = path.join(
+    Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
+    "applications",
+  );
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -215,7 +232,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
       ? `${distribution.slug}-dev.desktop`
       : distribution.linuxDesktopEntryName,
     linuxWmClass: isDevelopment ? `${distribution.slug}-dev` : distribution.slug,
+    linuxApplicationsDir,
+    appImagePath: config.appImagePath,
     userDataDirName,
+    legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({
       platform: input.platform,

@@ -22,6 +22,7 @@ import {
   Image,
   Platform,
   Pressable,
+  StyleSheet,
   useColorScheme,
   View,
   type ViewStyle,
@@ -63,9 +64,8 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  applyProviderOptionMenuEvent,
-  buildProviderOptionMenuActions,
-  providerOptionsConfigurationLabel,
+  applyProviderOptionSelection,
+  providerOptionValueLabels,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
@@ -79,6 +79,8 @@ import {
   formatContextWindowTokens,
   type TaskTreeContextWindowUsage,
 } from "./contextWindow";
+import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
+import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -91,6 +93,55 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
  * Used by the parent to compute the larger feed bottom inset when the composer is focused.
  */
 export const COMPOSER_EXPANDED_CHROME = 174;
+
+const providerOptionsConfigurationLabel = (
+  descriptors: ReturnType<typeof resolveProviderOptionDescriptors>,
+) => providerOptionValueLabels(descriptors).join(", ") || "Options";
+
+const providerOptionMenuId = (id: string, value: string | boolean) =>
+  `provider-option:${encodeURIComponent(id)}:${encodeURIComponent(String(value))}`;
+
+const buildProviderOptionMenuActions = (
+  descriptors: ReturnType<typeof resolveProviderOptionDescriptors>,
+) =>
+  descriptors.map((descriptor) => ({
+    id: `provider-option-group:${descriptor.id}`,
+    title: descriptor.label,
+    subtitle:
+      descriptor.type === "boolean"
+        ? undefined
+        : descriptor.options.find((option) => option.id === descriptor.currentValue)?.label,
+    subactions:
+      descriptor.type === "boolean"
+        ? [
+            {
+              id: providerOptionMenuId(descriptor.id, !descriptor.currentValue),
+              title: descriptor.currentValue ? "Off" : "On",
+            },
+          ]
+        : descriptor.options.map((option) => ({
+            id: providerOptionMenuId(descriptor.id, option.id),
+            title: option.label,
+            state: option.id === descriptor.currentValue ? ("on" as const) : undefined,
+          })),
+  }));
+
+const applyProviderOptionMenuEvent = (
+  descriptors: ReturnType<typeof resolveProviderOptionDescriptors>,
+  event: string,
+) => {
+  if (!event.startsWith("provider-option:")) return null;
+  const [, encodedId, encodedValue] = event.split(":");
+  if (encodedId === undefined || encodedValue === undefined) return null;
+  const id = decodeURIComponent(encodedId);
+  const descriptor = descriptors.find((candidate) => candidate.id === id);
+  if (!descriptor) return null;
+  const value =
+    descriptor.type === "boolean"
+      ? decodeURIComponent(encodedValue) === "true"
+      : decodeURIComponent(encodedValue);
+  return applyProviderOptionSelection(descriptors, { id, value });
+};
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
@@ -284,14 +335,27 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  const settingsSheetPresentation = useThreadSettingsSheetPresentation({
+    editorRef: inputRef,
+    isEditorFocused: isFocused,
+  });
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  const isExpanded = isFocused;
+  // Opening and closing count as active so the composer stays expanded while
+  // focus moves between its native editor and the settings modal.
+  const isExpanded = isFocused || settingsSheetPresentation.isActive;
   const canSend = hasContent;
+
+  // Notify the parent from the derived value, not focus events: the parent
+  // sizes the feed inset from this, and blur-during-sheet would otherwise
+  // report collapsed while the composer still renders expanded.
+  useEffect(() => {
+    onExpandedChange?.(isExpanded);
+  }, [isExpanded, onExpandedChange]);
 
   const onPressImage = useCallback(
     (uri: string) => {
@@ -310,13 +374,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleFocus = useCallback(() => {
     setIsFocused(true);
-    onExpandedChange?.(true);
-  }, [onExpandedChange]);
+  }, []);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    onExpandedChange?.(false);
-  }, [onExpandedChange]);
+  }, []);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
     props.selectedThread.session?.status === "starting";
@@ -530,14 +592,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
-    // Sending a prompt starts agent work: arm the lock-screen card now, while
-    // the app is foregrounded and the activity token can be registered.
-    armAgentAwarenessLiveActivityForLocalWork({
-      threadTitle: props.selectedThread.title,
-      projectTitle: props.environmentLabel ?? "T3 Code",
-    });
     try {
       await onSendMessage();
+      // Sending a prompt starts agent work: arm the lock-screen card while the
+      // app is foregrounded and the activity token can be registered. Armed
+      // after the send so its preference read and native Activity start don't
+      // contend with the queued-message feedback on the tap frame.
+      armAgentAwarenessLiveActivityForLocalWork({
+        threadTitle: props.selectedThread.title,
+        projectTitle: props.environmentLabel ?? "T3 Code",
+      });
     } finally {
       inFlightThreadIdsRef.current.delete(threadKey);
     }
@@ -597,6 +661,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     [props.serverConfig, currentModelSelection],
   );
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
+  // An existing thread is bound to its harness: sessions can't move between
+  // provider instances, so the picker only offers the thread's own group.
+  const threadProviderGroups = useMemo(
+    () => providerGroups.filter((group) => group.providerKey === currentModelSelection.instanceId),
+    [providerGroups, currentModelSelection.instanceId],
+  );
   const currentModelOption =
     modelOptions.find(
       (option) =>
@@ -767,6 +837,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.onUpdateInteractionMode(interactionMode);
     }
   }
+  const settingsSummaryLabel = threadSettingsSummaryLabel({
+    modelLabel: currentModelOption?.label ?? currentModelSelection.model,
+    optionDescriptors: providerOptionDescriptors,
+    runtimeMode: currentRuntimeMode,
+    interactionMode: currentInteractionMode,
+  });
 
   return (
     <Animated.View
@@ -775,11 +851,22 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       style={{
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
-        experimental_backgroundImage: isDarkMode
-          ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.9) 100%)"
-          : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.6) 55%, rgba(255,255,255,0.9) 100%)",
       }}
     >
+      {/* The backdrop gradient lives on a plain View: Reanimated's Animated.View
+          silently drops experimental_backgroundImage on Android, which left this
+          strip fully transparent and the feed text legible through the composer. */}
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            experimental_backgroundImage: isDarkMode
+              ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.9) 100%)"
+              : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.6) 55%, rgba(255,255,255,0.9) 100%)",
+          },
+        ]}
+      />
       <Animated.View
         className="relative w-full self-center"
         layout={COMPOSER_LAYOUT_TRANSITION}
@@ -957,6 +1044,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     label={configurationLabel}
                   />
                 </ControlPillMenu>
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Thread settings"
+                  iconNode={
+                    <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                  }
+                  label={settingsSummaryLabel}
+                  maxWidth={320}
+                  onPress={settingsSheetPresentation.open}
+                />
                 {showStopAction ? (
                   <ComposerToolbarButton
                     accessibilityLabel="Stop"
@@ -989,6 +1085,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </Animated.View>
         ) : null}
       </Animated.View>
+
+      <ThreadSettingsSheet
+        visible={settingsSheetPresentation.isVisible}
+        onClose={settingsSheetPresentation.close}
+        onDismissed={settingsSheetPresentation.onDismissed}
+        providerGroups={threadProviderGroups}
+        selectedModel={currentModelSelection}
+        onSelectModel={(option) => props.onUpdateModelSelection(option.selection)}
+        optionDescriptors={providerOptionDescriptors}
+        onUpdateOptionSelections={(options) =>
+          props.onUpdateModelSelection({ ...currentModelSelection, options })
+        }
+        runtimeMode={currentRuntimeMode}
+        onUpdateRuntimeMode={props.onUpdateRuntimeMode}
+      />
 
       <ImageViewing
         images={previewImageUri ? [{ uri: previewImageUri }] : []}

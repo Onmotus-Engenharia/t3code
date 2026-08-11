@@ -44,7 +44,18 @@ import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./ht
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
+const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 const GZIP_MIN_BYTES = 1024;
+
+export function assetResponseHeaders(filePath: string): Record<string, string> {
+  return {
+    "Cache-Control": "private, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+    ...(filePath.toLowerCase().endsWith(".svg")
+      ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
+      : {}),
+  };
+}
 
 function acceptsGzip(value: string | undefined): boolean {
   if (!value) return false;
@@ -272,10 +283,7 @@ export const assetRouteLayer = HttpRouter.add(
     }
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
-      headers: {
-        "Cache-Control": "private, max-age=3600",
-        "X-Content-Type-Options": "nosniff",
-      },
+      headers: assetResponseHeaders(asset.path),
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );
