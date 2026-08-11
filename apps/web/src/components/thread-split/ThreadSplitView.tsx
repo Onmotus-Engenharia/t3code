@@ -60,6 +60,7 @@ import {
   ThreadPaneRuntimeProvider,
   type PersistentTerminalPaneRuntime,
 } from "./ThreadPaneRuntimeContext";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 export interface ThreadSplitViewProps {
   routeTarget: ThreadRouteTarget;
@@ -370,7 +371,9 @@ function LayoutControls({
   onClose: () => void;
 }) {
   return (
-    <div className="absolute inset-x-0 top-0 z-50 flex h-10 items-center gap-2 border-b border-border/60 bg-background px-2">
+    <div
+      className={`absolute inset-x-0 top-0 z-50 flex h-10 items-center gap-2 border-b border-border/60 bg-background px-2 ${COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS}`}
+    >
       <div className="flex min-w-0 items-center gap-1 rounded border border-border bg-background p-1">
         {(["auto", "columns", "rows", "grid"] as const).map((mode) => (
           <button
