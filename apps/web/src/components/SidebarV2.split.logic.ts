@@ -13,6 +13,21 @@ export function resolveSidebarV2SplitSelection(
   };
 }
 
+/**
+ * The multi-select menu consumes this complete action, rather than rebuilding
+ * its label and limit checks independently from the selected target list.
+ */
+export function buildSplitSelectionAction(
+  orderedThreadKeys: readonly string[],
+  selectedThreadKeys: ReadonlySet<string>,
+) {
+  const selection = resolveSidebarV2SplitSelection(orderedThreadKeys, selectedThreadKeys);
+  return {
+    ...selection,
+    id: "open-in-split-view" as const,
+  };
+}
+
 export function resolveSidebarV2SingleSplitActionIds(input: {
   grouped: boolean;
   activeGroupPaneCount: number | null;

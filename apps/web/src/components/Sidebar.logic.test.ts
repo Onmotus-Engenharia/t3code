@@ -15,6 +15,8 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  pageSidebarTaskTreeGroups,
+  projectVisibleSidebarTaskTreeRows,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -910,6 +912,100 @@ describe("buildSidebarTaskTree", () => {
     expect(
       visibleSidebarTaskTreeRows(tree.active, new Set(["local:root"])).map((row) => row.thread.id),
     ).toEqual(["root"]);
+  });
+
+  it("projects collapsed roots consistently for every sidebar shelf", () => {
+    const activeRoot = task("active-root", null);
+    const activeChild = task("active-child", "active-root");
+    const snoozedRoot = task("snoozed-root", null);
+    const snoozedChild = task("snoozed-child", "snoozed-root");
+    const settledRoot = task("settled-root", null);
+    const settledChild = task("settled-child", "settled-root");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [activeRoot, activeChild],
+      snoozedThreads: [snoozedRoot, snoozedChild],
+      settledThreads: [settledRoot, settledChild],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+    const collapsed = new Set(["local:active-root", "local:snoozed-root", "local:settled-root"]);
+
+    const visible = projectVisibleSidebarTaskTreeRows(tree, collapsed);
+    expect(visible.active.map((row) => row.thread.id)).toEqual(["active-root"]);
+    expect(visible.snoozed.map((row) => row.thread.id)).toEqual(["snoozed-root"]);
+    expect(visible.settled.map((row) => row.thread.id)).toEqual(["settled-root"]);
+  });
+
+  it("keeps full task-row counts available while a shelf renders no rows", () => {
+    const root = task("root", null);
+    const child = task("child", "root");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [],
+      snoozedThreads: [root, child],
+      settledThreads: [],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    // A collapsed snoozed shelf renders [] unless routed, but its header must
+    // still receive the complete task-tree count and remain reopenable.
+    expect(projectVisibleSidebarTaskTreeRows(tree, new Set()).snoozed).toHaveLength(2);
+  });
+
+  it("pages settled history by whole task groups and includes a routed deep group", () => {
+    const firstRoot = task("first-root", null);
+    const firstChild = task("first-child", "first-root");
+    const secondRoot = task("second-root", null);
+    const secondChild = task("second-child", "second-root");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [],
+      snoozedThreads: [],
+      settledThreads: [firstRoot, firstChild, secondRoot, secondChild],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    const page = pageSidebarTaskTreeGroups({
+      groups: tree.settled,
+      visibleRowLimit: 1,
+      routeThreadKey: "local:second-child",
+    });
+
+    expect(page.map((group) => group.rootThreadKey)).toEqual([
+      "local:first-root",
+      "local:second-root",
+    ]);
+    expect(page.flatMap((group) => group.rows.map((row) => row.thread.id))).toEqual([
+      "first-root",
+      "first-child",
+      "second-root",
+      "second-child",
+    ]);
+  });
+
+  it("uses the collapsed shelf count without splitting a retained task group", () => {
+    const root = task("root", null);
+    const child = task("child", "root");
+    const tree = buildSidebarTaskTree({
+      activeThreads: [],
+      snoozedThreads: [],
+      settledThreads: [root, child],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    expect(
+      pageSidebarTaskTreeGroups({
+        groups: tree.settled,
+        visibleRowLimit: 1,
+        routeThreadKey: null,
+        totalRowCount: 1,
+      }),
+    ).toEqual(tree.settled);
   });
 });
 

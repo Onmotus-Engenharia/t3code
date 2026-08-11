@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import distribution from "../../../../distribution.json" with { type: "json" };
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -20,7 +21,10 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // our own handler entry pointing at the current AppImage and claim the
 // scheme default via xdg-mime, exactly what the file manager's "set as
 // default" checkbox would record in mimeapps.list.
-export const URL_HANDLER_DESKTOP_ENTRY_NAME = "t3code-url-handler.desktop";
+// This file lives in the user's shared XDG applications directory. It must be
+// distribution-specific so installing Orchestrator cannot overwrite the
+// official application's URL-handler entry.
+export const URL_HANDLER_DESKTOP_ENTRY_NAME = `${distribution.slug}-url-handler.desktop`;
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 

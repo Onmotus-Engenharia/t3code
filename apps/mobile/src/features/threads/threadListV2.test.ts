@@ -487,7 +487,7 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(0);
   });
 
-  it("partitions settled threads into a slim shelf", () => {
+  it("partitions threads by inactivity into a slim settled shelf", () => {
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "Active" }),
@@ -517,6 +517,40 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items.map((item) => item.isLast)).toEqual([false, false, true]);
     expect(layout.settledCount).toBe(2);
     expect(layout.settledShelfHeaderIndex).toBe(1);
+  });
+
+  it("keeps recently completed work active until its inactivity window expires", () => {
+    const completedTurn = (id: string, completedAt: string) => ({
+      turnId: TurnId.make(id),
+      state: "completed" as const,
+      requestedAt: completedAt,
+      startedAt: completedAt,
+      completedAt,
+      assistantMessageId: null,
+    });
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("recent"),
+          title: "Recently completed",
+          latestTurn: completedTurn("recent-turn", "2026-06-01T23:00:00.000Z"),
+        }),
+        makeThread({
+          id: ThreadId.make("inactive"),
+          title: "Inactive",
+          latestTurn: completedTurn("inactive-turn", "2026-05-30T00:00:00.000Z"),
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      autoSettleAfterDays: 1,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["recent", "card"],
+      ["inactive", "slim"],
+    ]);
   });
 
   it("collapses settled threads to a counted shelf header", () => {

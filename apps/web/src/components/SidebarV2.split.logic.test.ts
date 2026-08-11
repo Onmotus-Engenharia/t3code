@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { THREAD_SPLIT_MAX_PANES } from "../threadSplitStore";
+import { createThreadSplitStore } from "../threadSplitStore";
 import {
+  buildSplitSelectionAction,
   resolveSidebarV2SingleSplitActionIds,
   resolveSidebarV2SplitSelection,
 } from "./SidebarV2.split.logic";
@@ -18,6 +20,28 @@ describe("SidebarV2 split integration logic", () => {
       String(index),
     );
     expect(resolveSidebarV2SplitSelection(overLimit, new Set(overLimit)).disabled).toBe(true);
+  });
+
+  it("creates the current-sidebar action and opens cross-environment targets in rendered order", () => {
+    const action = buildSplitSelectionAction(
+      ["local:one", "remote:two", "local:three"],
+      new Set(["local:three", "remote:two"]),
+    );
+
+    expect(action).toMatchObject({
+      id: "open-in-split-view",
+      label: "Open in split view (2)",
+      disabled: false,
+      targetKeys: ["server:remote:two", "server:local:three"],
+    });
+
+    const store = createThreadSplitStore({ storage: null });
+    const groupId = store.getState().openTargets(action.targetKeys, {
+      mode: "new-group",
+      focusTargetKey: action.targetKeys[0]!,
+    });
+    expect(groupId).not.toBeNull();
+    expect(store.getState().groups[groupId!]?.targetKeys).toEqual(action.targetKeys);
   });
 
   it("offers grouped, ungrouped, and task-tree alternatives contextually", () => {

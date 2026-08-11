@@ -1,4 +1,8 @@
-import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -9,10 +13,10 @@ import {
   canSnooze,
   effectiveSettled,
   effectiveSnoozed,
-  type ChangeRequestStateLike,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback } from "react";
+import { useParams } from "@tanstack/react-router";
+import { useCallback, useMemo } from "react";
 
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
 import {
@@ -28,7 +32,17 @@ import {
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
+  useThreadShells,
 } from "../state/entities";
+import { resolveThreadRouteTarget, threadRouteTargetToSplitKey } from "../threadRoutes";
+import { useThreadNavigation } from "../threadSplitNavigation";
+import {
+  getThreadSplitGroupForTarget,
+  THREAD_SPLIT_MAX_PANES,
+  threadSplitStore,
+  type ThreadSplitTargetKey,
+} from "../threadSplitStore";
+import { buildSplitTaskCatalog } from "../splitViewCommands";
 import { readLocalApi } from "../localApi";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
@@ -60,11 +74,9 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
-  /** PR state feeding auto-settle classification, as resolved by the caller. */
-  readonly changeRequestState: ChangeRequestStateLike | null;
   readonly onStartRename: () => void;
 }) {
-  const { threadRef, projectCwd, changeRequestState, onStartRename } = input;
+  const { threadRef, projectCwd, onStartRename } = input;
   const {
     settleThread,
     unsettleThread,
@@ -82,11 +94,27 @@ export function useThreadActionMenu(input: {
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const threadNavigation = useThreadNavigation(routeTarget);
+  const threads = useThreadShells();
+  const splitCatalog = useMemo(() => buildSplitTaskCatalog(threads), [threads]);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({ type: "success", title: "Path copied", description: path });
     },
     onError: (error) => failureToast("Failed to copy path", error),
+  });
+  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
+    threadId: string;
+  }>({
+    target: "thread ID",
+    onCopy: ({ threadId }) => {
+      toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
+    },
+    onError: (error) => failureToast("Failed to copy thread ID", error),
   });
   const { copyToClipboard: copyBranchToClipboard } = useCopyToClipboard<{ branch: string }>({
     target: "branch name",
@@ -115,6 +143,24 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const splitTargetKey = `server:${scopedThreadKey(threadRef)}` as ThreadSplitTargetKey;
+        const splitSnapshot = threadSplitStore.getState();
+        const owningSplitGroup = getThreadSplitGroupForTarget(splitSnapshot, splitTargetKey);
+        const activeSplitGroup = splitSnapshot.activeGroupId
+          ? splitSnapshot.groups[splitSnapshot.activeGroupId]
+          : undefined;
+        const focusedTarget = threadNavigation.getFocusedTarget();
+        const focusedTargetKey = focusedTarget ? threadRouteTargetToSplitKey(focusedTarget) : null;
+        const rootThreadId = thread.taskRelation?.rootThreadId ?? thread.id;
+        const rootThreadKey = scopedThreadKey(
+          scopeThreadRef(threadRef.environmentId, rootThreadId),
+        );
+        const taskSplitGroup = Object.values(splitSnapshot.groups).find(
+          (group) => group.taskTreeBinding?.rootThreadKey === rootThreadKey,
+        );
+        const hasTaskDescendants = splitCatalog.some(
+          (entry) => entry.rootThreadKey === rootThreadKey,
+        );
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
@@ -126,13 +172,20 @@ export function useThreadActionMenu(input: {
               // parked-thread banner within the same minute.
               now: `${now.toISOString().slice(0, 16)}:00.000Z`,
               autoSettleAfterDays,
-              changeRequestState,
             }),
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           supports,
           snoozePresets,
+          split: {
+            grouped: owningSplitGroup !== undefined,
+            activeGroupPaneCount: activeSplitGroup?.targetKeys.length ?? null,
+            hasDifferentFocusedTarget:
+              focusedTargetKey !== null && focusedTargetKey !== splitTargetKey,
+            hasTaskDescendants,
+            hasTaskSplitGroup: taskSplitGroup !== undefined,
+          },
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -176,6 +229,73 @@ export function useThreadActionMenu(input: {
           }
         };
         switch (action) {
+          case "focus-in-split-view":
+            await threadNavigation.openTarget(
+              { kind: "server", threadRef },
+              { history: "push", disposition: "activate-existing-group" },
+            );
+            return;
+          case "remove-from-split-view":
+            threadSplitStore.getState().removeTarget(splitTargetKey);
+            return;
+          case "open-in-current-split-view": {
+            const groupId = threadSplitStore.getState().activeGroupId;
+            if (!groupId) return;
+            const openedGroupId = threadSplitStore.getState().openTargets([splitTargetKey], {
+              groupId,
+              mode: "add",
+              focusTargetKey: splitTargetKey,
+            });
+            if (openedGroupId) {
+              await threadNavigation.openTarget(
+                { kind: "server", threadRef },
+                { history: "push", disposition: "activate-existing-group" },
+              );
+            }
+            return;
+          }
+          case "start-split-view": {
+            if (!focusedTargetKey || focusedTargetKey === splitTargetKey) return;
+            const groupId = threadSplitStore
+              .getState()
+              .openTargets([focusedTargetKey, splitTargetKey], {
+                mode: "new-group",
+                focusTargetKey: splitTargetKey,
+              });
+            if (groupId) {
+              await threadNavigation.openTarget(
+                { kind: "server", threadRef },
+                { history: "push", disposition: "activate-existing-group" },
+              );
+            }
+            return;
+          }
+          case "split-task-tree":
+          case "open-task-split-view": {
+            const rootRef = scopeThreadRef(threadRef.environmentId, rootThreadId);
+            const result = threadSplitStore
+              .getState()
+              .openTaskTree(
+                `server:${scopedThreadKey(rootRef)}` as ThreadSplitTargetKey,
+                splitCatalog,
+              );
+            if (result.omittedCount > 0) {
+              toastManager.add({
+                type: "info",
+                title: `Task split view limited to ${THREAD_SPLIT_MAX_PANES} panes`,
+                description: `${result.omittedCount} descendant${
+                  result.omittedCount === 1 ? "" : "s"
+                } remain available to add.`,
+              });
+            }
+            if (result.groupId) {
+              await threadNavigation.openTarget(
+                { kind: "server", threadRef: rootRef },
+                { history: "push", disposition: "activate-existing-group" },
+              );
+            }
+            return;
+          }
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
@@ -237,6 +357,9 @@ export function useThreadActionMenu(input: {
             copyPathToClipboard(workspacePath, { path: workspacePath });
             return;
           }
+          case "copy-thread-id":
+            copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
           case "copy-branch":
             if (thread.branch) {
               copyBranchToClipboard(thread.branch, { branch: thread.branch });
@@ -275,10 +398,10 @@ export function useThreadActionMenu(input: {
     },
     [
       autoSettleAfterDays,
-      changeRequestState,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
+      copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,
       markThreadUnread,
@@ -287,7 +410,9 @@ export function useThreadActionMenu(input: {
       projectCwd,
       settleThread,
       snoozeThread,
+      splitCatalog,
       threadRef,
+      threadNavigation,
       timestampFormat,
       unpinThread,
       unsettleThread,

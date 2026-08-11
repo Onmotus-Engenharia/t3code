@@ -50,8 +50,13 @@ function resolveEarlyDesktopSettingsPath(input: {
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
 }): string {
-  const configuredBaseDir =
-    input.env[distribution.environment.packagedHome] ?? input.env.T3CODE_HOME;
+  const isDevelopment = isDevelopmentEnvironment(input.env);
+  // Packaged Orchestrator must never inspect the official app's state before
+  // Electron is ready. Development remains compatible with the dev runner's
+  // worktree-scoped T3CODE_HOME.
+  const configuredBaseDir = isDevelopment
+    ? input.env.T3CODE_HOME
+    : input.env[distribution.environment.packagedHome];
   const baseDir = resolveDesktopBaseDir({
     homeDirectory: input.homeDirectory,
     joinPath: input.joinPath,
@@ -60,7 +65,7 @@ function resolveEarlyDesktopSettingsPath(input: {
   });
   const stateDir = resolveDesktopStateDir({
     baseDir,
-    isDevelopment: isDevelopmentEnvironment(input.env),
+    isDevelopment,
     joinPath: input.joinPath,
     configuredBaseDir,
     developmentStateDirName: distribution.directories.developmentState,

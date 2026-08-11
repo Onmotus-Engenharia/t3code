@@ -13,6 +13,7 @@ custom names through upstream files.
 | macOS bundle ID              | `dev.mateuslucas.t3code.orchestrator`                |
 | Windows app/user-model ID    | `dev.mateuslucas.t3code.orchestrator`                |
 | URL protocols                | `t3-code-orchestrator`, `t3-code-orchestrator-dev`   |
+| Linux URL-handler entry      | `t3-code-orchestrator-url-handler.desktop`           |
 | Default desktop backend port | `4773`, with the normal occupied-port fallback       |
 | macOS Electron user data     | `~/Library/Application Support/t3-code-orchestrator` |
 | Cross-platform T3 base/state | `~/.t3-code-orchestrator/userdata`                   |
@@ -27,6 +28,8 @@ Packaged builds honor only `T3CODE_ORCHESTRATOR_HOME` as a state-root override. 
 `T3CODE_HOME` before starting the bundled backend. The custom app does not probe or migrate official
 T3 user-data paths. Electron session data, logs, single-instance identity, protocol registration,
 installer/uninstaller identity, executable name, and backend bootstrap therefore remain separate.
+On Linux, the handler entry name is also custom, so installing Orchestrator cannot replace the
+official application's entry in the shared XDG applications directory.
 
 There is no automatic import. Copying official state into these locations is unsupported; add a
 reviewed import command later if migration becomes necessary.

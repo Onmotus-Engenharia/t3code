@@ -374,10 +374,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       would fall off the end of the list. */
   readonly canMovePinnedUp?: boolean;
   readonly canMovePinnedDown?: boolean;
-  readonly onChangeRequestState?: (
-    threadKey: string,
-    state: "open" | "closed" | "merged" | null,
-  ) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly projectCwd?: string | null;
@@ -402,15 +398,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onPinThread,
     onUnpinThread,
     onMovePinnedThread,
-    onChangeRequestState,
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
 
   const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
-  useEffect(() => {
-    props.onChangeRequestState?.(`${thread.environmentId}:${thread.id}`, pr?.state ?? null);
-  }, [pr?.state, props.onChangeRequestState, thread.environmentId, thread.id]);
 
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");

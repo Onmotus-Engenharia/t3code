@@ -1608,11 +1608,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "Development",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
-      // t3code:// OAuth callbacks to the app.
+      // this distribution's OAuth callbacks to the app without replacing the
+      // official T3 Code handler.
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: distribution.displayName,
+          schemes: [distribution.protocols.production, distribution.protocols.development],
         },
       ],
       desktop: {

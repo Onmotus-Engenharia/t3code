@@ -657,6 +657,51 @@ export function visibleSidebarTaskTreeRows<T>(
   );
 }
 
+/** The exact per-shelf row projection consumed by sidebar navigation and JSX. */
+export function projectVisibleSidebarTaskTreeRows<T>(
+  sections: SidebarTaskTreeSections<T>,
+  collapsedRootThreadKeys: ReadonlySet<string>,
+): Record<SidebarTaskTreeSection, readonly SidebarTaskTreeRow<T>[]> {
+  return {
+    active: visibleSidebarTaskTreeRows(sections.active, collapsedRootThreadKeys),
+    snoozed: visibleSidebarTaskTreeRows(sections.snoozed, collapsedRootThreadKeys),
+    settled: visibleSidebarTaskTreeRows(sections.settled, collapsedRootThreadKeys),
+  };
+}
+
+/**
+ * Paginates settled history by complete visual task trees. A deep-linked
+ * descendant brings its whole tree into the page so hierarchy remains intact.
+ */
+export function pageSidebarTaskTreeGroups<T>(input: {
+  readonly groups: ReadonlyArray<SidebarTaskTreeGroup<T>>;
+  readonly visibleRowLimit: number;
+  readonly routeThreadKey: string | null;
+  /** Count after collapse projection; this also drives the shelf label. */
+  readonly totalRowCount?: number;
+}): readonly SidebarTaskTreeGroup<T>[] {
+  const { groups, routeThreadKey, visibleRowLimit } = input;
+  const totalRowCount =
+    input.totalRowCount ?? groups.reduce((count, group) => count + group.rows.length, 0);
+  if (totalRowCount <= visibleRowLimit) return groups;
+
+  const visible: SidebarTaskTreeGroup<T>[] = [];
+  let visibleRowCount = 0;
+  for (const group of groups) {
+    if (visibleRowCount >= visibleRowLimit) break;
+    visible.push(group);
+    visibleRowCount += group.rows.length;
+  }
+  const routeGroup =
+    routeThreadKey === null
+      ? undefined
+      : groups.find((group) => group.rows.some((row) => row.threadKey === routeThreadKey));
+  if (routeGroup && !visible.some((group) => group.rootThreadKey === routeGroup.rootThreadKey)) {
+    visible.push(routeGroup);
+  }
+  return visible;
+}
+
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
 export {
