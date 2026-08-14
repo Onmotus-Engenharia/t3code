@@ -19,9 +19,15 @@ flag is sent on every turn, so changing it affects an existing provider session 
 
 ## Tool contracts
 
-The Codex namespace is `t3_tasks`. Each call returns a Codex dynamic-tool response containing one
-JSON `inputText` item. Success responses set `success: true`; failures set `success: false` and
-return `{ "error": { "code": "...", "message": "..." } }`.
+The Codex namespaces are `t3_tasks` and `t3_threads`. Each call returns a Codex dynamic-tool
+response containing one JSON `inputText` item. Success responses set `success: true`; failures set
+`success: false` and return `{ "error": { "code": "...", "message": "..." } }`.
+
+`t3_threads` is read-only and does not require task orchestration to be enabled. It lets a thread
+inspect any known thread ID in the same T3 Code environment, including its bounded transcript,
+tool/activity log, status, workspace context, and final message. It also supports bounded waiting
+for status or output changes. It deliberately provides no cross-thread message, interrupt, pin, or
+orchestration controls.
 
 | Tool                     | Input                                                                                                                                             | Result                                                                                                                                       |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -33,6 +39,8 @@ return `{ "error": { "code": "...", "message": "..." } }`.
 | `t3_tasks.interrupt`     | `threadId`                                                                                                                                        | Safe turn-interrupt request; never archives or deletes                                                                                       |
 | `t3_tasks.pin`           | `threadId`, `pinned`                                                                                                                              | Persisted pin state                                                                                                                          |
 | `t3_tasks.orchestration` | `threadId`, `enabled`                                                                                                                             | Root-only enable/disable result for an owned direct child                                                                                    |
+| `t3_threads.read`        | known `threadId`; optional message/activity cursors and limits (1â€“20)                                                                           | Bounded transcript and activity/tool-call log, status, workspace context, session, and cursor state                                          |
+| `t3_threads.wait`        | 1â€“4 known `threadId` values with optional cursor and `outputToken`; optional `timeoutSeconds` (0â€“60)                                          | Returns on status/output change or timeout, with status, cursors, and output tokens                                                          |
 
 `workspaceMode` defaults to `isolated`; `shared` must be explicit. Supplied project and workspace
 values must exactly match the caller's saved project and effective checkout. Example:
@@ -99,9 +107,10 @@ Root threads allow orchestration by default. Newly created depth-1 child tasks a
 orchestration by default, so they can create the permitted depth-2 generation. Depth-2 tasks start
 disabled. Calls made while disabled return `permission_denied`.
 
-The service accepts only direct child tasks created by the calling orchestrator in the same project.
-Guessed IDs, the caller itself, ancestors, siblings, and unrelated threads return
-`ownership_denied`. Current bounds are:
+The `t3_tasks` service accepts only direct child tasks created by the calling orchestrator in the
+same project. Guessed IDs, the caller itself, ancestors, siblings, and unrelated threads return
+`ownership_denied`. `t3_threads` is the explicit read-only exception: a known ID can be inspected
+from any active thread in the same environment. Current bounds are:
 
 - maximum root create batch and active direct children: 10;
 - maximum depth-1 child create batch and active direct children: 4 per child;

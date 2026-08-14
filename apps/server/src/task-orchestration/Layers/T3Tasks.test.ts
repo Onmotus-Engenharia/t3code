@@ -238,7 +238,7 @@ describe("T3Tasks authorization and advertised limits", () => {
   });
 
   it("advertises root create, child wait, and orchestration controls", () => {
-    const namespace = T3_TASK_DYNAMIC_TOOLS[0];
+    const namespace = T3_TASK_DYNAMIC_TOOLS.find((tool) => tool.name === "t3_tasks");
     NodeAssert.equal(namespace?.type, "namespace");
     if (namespace?.type !== "namespace") return;
     const create = namespace.tools.find((tool) => tool.name === "create");
@@ -277,6 +277,15 @@ describe("T3Tasks authorization and advertised limits", () => {
       | undefined;
     NodeAssert.deepStrictEqual(orchestrationSchema?.required, ["threadId", "enabled"]);
     NodeAssert.equal(orchestrationSchema?.properties?.enabled?.type, "boolean");
+
+    const threadNamespace = T3_TASK_DYNAMIC_TOOLS.find((tool) => tool.name === "t3_threads");
+    NodeAssert.equal(threadNamespace?.type, "namespace");
+    if (threadNamespace?.type !== "namespace") return;
+    const threadRead = threadNamespace.tools.find((tool) => tool.name === "read");
+    const threadWait = threadNamespace.tools.find((tool) => tool.name === "wait");
+    NodeAssert.ok(threadRead);
+    NodeAssert.ok(threadWait);
+    NodeAssert.match(threadNamespace.description, /any known thread ID/i);
   });
 
   it("rejects invalid caller-level batches and depth-three recursion", () => {

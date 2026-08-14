@@ -41,6 +41,7 @@ const thread = (input: {
     title: input.id,
     pinned: false,
     messages: [],
+    activities: [],
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.6-sol",
@@ -138,6 +139,38 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       const unrelated = {
         ...thread({ id: "unrelated" }),
         taskOrchestrationEnabled: true,
+        branch: "feature/other-thread",
+        worktreePath: "/other-repo/worktree",
+        latestTurn: {
+          turnId: TurnId.make("unrelated-completed-turn"),
+          state: "completed" as const,
+          requestedAt: "2026-07-28T00:00:00.000Z",
+          startedAt: "2026-07-28T00:00:00.000Z",
+          completedAt: "2026-07-28T00:00:01.000Z",
+          assistantMessageId: MessageId.make("unrelated-final-message"),
+        },
+        messages: [
+          {
+            id: MessageId.make("unrelated-final-message"),
+            role: "assistant" as const,
+            text: "The unrelated thread's final result.",
+            turnId: TurnId.make("unrelated-completed-turn"),
+            streaming: false,
+            createdAt: "2026-07-28T00:00:01.000Z",
+            updatedAt: "2026-07-28T00:00:01.000Z",
+          },
+        ],
+        activities: [
+          {
+            id: "unrelated-tool-call",
+            tone: "tool",
+            kind: "mcp_tool_call",
+            summary: "Read the prior thread result",
+            payload: { tool: "t3_threads.read", arguments: { threadId: "source-thread" } },
+            turnId: TurnId.make("unrelated-completed-turn"),
+            createdAt: "2026-07-28T00:00:01.000Z",
+          },
+        ],
       } as unknown as OrchestrationThread;
       const snapshotRef = yield* Ref.make({
         snapshotSequence: 1,
@@ -220,7 +253,20 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             turnId: "provider-turn",
           },
         });
+      const inspectAs = (callerThreadId: string, tool: string, args: unknown) =>
+        service.execute({
+          callerThreadId: ThreadId.make(callerThreadId),
+          payload: {
+            namespace: "t3_threads",
+            tool,
+            arguments: args,
+            callId: "call-1",
+            threadId: "provider-thread",
+            turnId: "provider-turn",
+          },
+        });
       const call = (tool: string, args: unknown) => callAs("root", tool, args);
+      const inspect = (tool: string, args: unknown) => inspectAs("root", tool, args);
       const body = (response: Awaited<Effect.Success<ReturnType<typeof call>>>) =>
         JSON.parse(
           response.contentItems[0]?.type === "inputText" ? response.contentItems[0].text : "{}",
@@ -229,6 +275,37 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       const denied = yield* call("list", {});
       NodeAssert.equal(denied.success, false);
       NodeAssert.equal((body(denied).error as { code?: string }).code, "permission_denied");
+
+      const crossThreadRead = yield* inspect("read", {
+        threadId: "unrelated",
+        activityLimit: 1,
+      });
+      NodeAssert.equal(crossThreadRead.success, true);
+      NodeAssert.equal(body(crossThreadRead).threadId, "unrelated");
+      NodeAssert.equal(body(crossThreadRead).status, "completed");
+      NodeAssert.deepStrictEqual(body(crossThreadRead).workspace, {
+        projectId: "project-1",
+        branch: "feature/other-thread",
+        worktreePath: "/other-repo/worktree",
+      });
+      NodeAssert.equal(
+        (body(crossThreadRead).messages as Array<{ text?: string }>)[0]?.text,
+        "The unrelated thread's final result.",
+      );
+      NodeAssert.deepStrictEqual(
+        (body(crossThreadRead).activities as Array<{ payload?: unknown }>)[0]?.payload,
+        { tool: "t3_threads.read", arguments: { threadId: "source-thread" } },
+      );
+
+      const crossThreadWait = yield* inspect("wait", {
+        tasks: [{ threadId: "unrelated", cursor: 1 }],
+        timeoutSeconds: 0,
+      });
+      NodeAssert.equal(crossThreadWait.success, true);
+      NodeAssert.equal(
+        (body(crossThreadWait).tasks as Array<{ status?: string }>)[0]?.status,
+        "completed",
+      );
 
       yield* Ref.update(snapshotRef, (snapshot) => ({
         ...snapshot,

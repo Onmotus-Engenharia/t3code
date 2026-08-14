@@ -19,10 +19,53 @@ const functionTool = (
 
 /**
  * Codex app-server only accepts dynamic tools at `thread/start`, so this
- * namespace is advertised on every orchestrator-owned Codex thread. The live
- * handler rechecks the persisted per-thread opt-in on every call.
+ * namespaces are advertised on every Codex thread. The live handler rechecks
+ * the persisted per-thread opt-in for mutating task-orchestration calls.
  */
 export const T3_TASK_DYNAMIC_TOOLS: ReadonlyArray<V2ThreadStartParams__DynamicToolSpec> = [
+  {
+    type: "namespace",
+    name: "t3_threads",
+    description:
+      "Inspect known T3 Code threads in this environment. These read-only calls work for any known thread ID, not only child tasks.",
+    tools: [
+      functionTool(
+        "read",
+        "Read a known thread's bounded conversation, activity/tool-call log, current status, and workspace context.",
+        {
+          threadId: { type: "string", minLength: 1 },
+          cursor: { type: "integer", minimum: 0 },
+          limit: { type: "integer", minimum: 1, maximum: 20 },
+          activityCursor: { type: "integer", minimum: 0 },
+          activityLimit: { type: "integer", minimum: 1, maximum: 20 },
+        },
+        ["threadId"],
+      ),
+      functionTool(
+        "wait",
+        "Wait for status or output changes on up to four known thread IDs.",
+        {
+          tasks: {
+            type: "array",
+            minItems: 1,
+            maxItems: 4,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                threadId: { type: "string", minLength: 1 },
+                cursor: { type: "integer", minimum: 0 },
+                outputToken: { type: "string", minLength: 1 },
+              },
+              required: ["threadId"],
+            },
+          },
+          timeoutSeconds: { type: "integer", minimum: 0, maximum: 60 },
+        },
+        ["tasks"],
+      ),
+    ],
+  },
   {
     type: "namespace",
     name: "t3_tasks",
@@ -61,11 +104,13 @@ export const T3_TASK_DYNAMIC_TOOLS: ReadonlyArray<V2ThreadStartParams__DynamicTo
       }),
       functionTool(
         "read",
-        "Read bounded projected messages and contextHealth for one owned task.",
+        "Read bounded projected messages, activity/tool-call log, and contextHealth for one owned task.",
         {
           threadId: { type: "string", minLength: 1 },
           cursor: { type: "integer", minimum: 0 },
           limit: { type: "integer", minimum: 1, maximum: 20 },
+          activityCursor: { type: "integer", minimum: 0 },
+          activityLimit: { type: "integer", minimum: 1, maximum: 20 },
         },
         ["threadId"],
       ),

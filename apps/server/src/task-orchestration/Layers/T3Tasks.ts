@@ -38,6 +38,7 @@ import { executeCreate } from "../create.ts";
 const MAX_CREATE_BATCH = 10;
 const MAX_WAIT_BATCH = 4;
 const MAX_READ_MESSAGES = 20;
+const MAX_READ_ACTIVITIES = 20;
 const MAX_READ_CHARS = 12_000;
 const MAX_WAIT_SECONDS = 60;
 
@@ -54,13 +55,14 @@ export const makeT3Tasks = Effect.gen(function* () {
 
   const snapshotContext = Effect.fn("T3Tasks.snapshotContext")(function* (
     callerThreadId: ThreadId,
+    requiresTaskOrchestration: boolean,
   ) {
     const snapshot = yield* query.getSnapshot();
     const caller = snapshot.threads.find((thread) => thread.id === callerThreadId);
     if (!caller || caller.deletedAt !== null || caller.archivedAt !== null) {
       return fail("not_found", `Calling thread '${callerThreadId}' is not active.`);
     }
-    if (!caller.taskOrchestrationEnabled) {
+    if (requiresTaskOrchestration && !caller.taskOrchestrationEnabled) {
       return fail(
         "permission_denied",
         "Task orchestration is disabled for this thread. Enable it explicitly before using t3_tasks.",
@@ -89,6 +91,12 @@ export const makeT3Tasks = Effect.gen(function* () {
     return target;
   };
 
+  const knownTarget = (threads: ReadonlyArray<OrchestrationThread>, rawThreadId: string) => {
+    const target = threads.find((thread) => thread.id === rawThreadId);
+    if (!target) return fail("not_found", `Thread '${rawThreadId}' was not found.`);
+    return target;
+  };
+
   const dispatchTurn = Effect.fn("T3Tasks.dispatchTurn")(function* (
     thread: OrchestrationThread,
     text: string,
@@ -113,11 +121,24 @@ export const makeT3Tasks = Effect.gen(function* () {
 
   const executeUnsafe = Effect.fn("T3Tasks.executeUnsafe")(function* (
     callerThreadId: ThreadId,
+    namespace: string,
     tool: string,
     rawArguments: unknown,
   ) {
     const args = object(rawArguments);
-    const { snapshot, caller, project } = yield* snapshotContext(callerThreadId);
+    const isTaskTool = namespace === "t3_tasks";
+    const isThreadInspection = namespace === "t3_threads";
+    if (!isTaskTool && !isThreadInspection) {
+      return fail("invalid_arguments", `Unknown dynamic tool namespace '${namespace}'.`);
+    }
+    if (isThreadInspection && tool !== "read" && tool !== "wait") {
+      return fail("invalid_arguments", `Unknown t3_threads tool '${tool}'.`);
+    }
+    const { snapshot, caller, project } = yield* snapshotContext(callerThreadId, isTaskTool);
+    const targetFor = (threads: ReadonlyArray<OrchestrationThread>, rawThreadId: string) =>
+      isThreadInspection
+        ? knownTarget(threads, rawThreadId)
+        : ownedTarget(caller, threads, rawThreadId);
 
     if (tool === "list") {
       const statusFilter = optionalString(args, "status");
@@ -127,7 +148,7 @@ export const makeT3Tasks = Effect.gen(function* () {
     }
 
     if (tool === "read") {
-      const target = ownedTarget(caller, snapshot.threads, requiredString(args, "threadId"));
+      const target = targetFor(snapshot.threads, requiredString(args, "threadId"));
       const cursorValue = args.cursor;
       const cursor =
         cursorValue === undefined
@@ -145,6 +166,28 @@ export const makeT3Tasks = Effect.gen(function* () {
               limitValue <= MAX_READ_MESSAGES
             ? limitValue
             : fail("invalid_arguments", `'limit' must be between 1 and ${MAX_READ_MESSAGES}.`);
+      const activityCursorValue = args.activityCursor;
+      const activityCursor =
+        activityCursorValue === undefined
+          ? 0
+          : typeof activityCursorValue === "number" &&
+              Number.isInteger(activityCursorValue) &&
+              activityCursorValue >= 0
+            ? activityCursorValue
+            : fail("invalid_arguments", "'activityCursor' must be a non-negative integer.");
+      const activityLimitValue = args.activityLimit;
+      const activityLimit =
+        activityLimitValue === undefined
+          ? MAX_READ_ACTIVITIES
+          : typeof activityLimitValue === "number" &&
+              Number.isInteger(activityLimitValue) &&
+              activityLimitValue >= 1 &&
+              activityLimitValue <= MAX_READ_ACTIVITIES
+            ? activityLimitValue
+            : fail(
+                "invalid_arguments",
+                `'activityLimit' must be between 1 and ${MAX_READ_ACTIVITIES}.`,
+              );
       const selected: Array<OrchestrationThread["messages"][number]> = [];
       let chars = 0;
       for (const message of target.messages.slice(cursor, cursor + limit)) {
@@ -156,22 +199,43 @@ export const makeT3Tasks = Effect.gen(function* () {
       const tail = selected.at(-1);
       const nextCursor =
         tail?.streaming === true ? cursor + selected.length - 1 : cursor + selected.length;
+      const activities = target.activities.slice(activityCursor, activityCursor + activityLimit);
+      const nextActivityCursor = activityCursor + activities.length;
       const contextHealth = deriveTaskContextHealth(target);
       return {
         threadId: target.id,
         status: threadStatus(target),
         summary: taskSummary(target, contextHealth),
         contextHealth,
+        workspace: {
+          projectId: target.projectId,
+          branch: target.branch,
+          worktreePath: target.worktreePath,
+        },
+        latestTurn: target.latestTurn,
+        session: target.session,
         messages: selected.map((message) => ({
           id: message.id,
           role: message.role,
           text: message.text,
+          turnId: message.turnId,
           createdAt: message.createdAt,
           streaming: message.streaming,
+        })),
+        activities: activities.map((activity) => ({
+          id: activity.id,
+          tone: activity.tone,
+          kind: activity.kind,
+          summary: activity.summary,
+          payload: activity.payload,
+          turnId: activity.turnId,
+          createdAt: activity.createdAt,
         })),
         nextCursor,
         outputToken: tail?.streaming === true ? taskOutputToken(target, nextCursor) : null,
         truncated: nextCursor < target.messages.length,
+        nextActivityCursor,
+        activitiesTruncated: nextActivityCursor < target.activities.length,
       };
     }
 
@@ -200,7 +264,7 @@ export const makeT3Tasks = Effect.gen(function* () {
         };
       });
       const ids = waits.map((wait) => wait.threadId);
-      for (const id of ids) ownedTarget(caller, snapshot.threads, id);
+      for (const id of ids) targetFor(snapshot.threads, id);
       const timeoutValue = args.timeoutSeconds;
       const timeoutSeconds =
         timeoutValue === undefined
@@ -215,7 +279,7 @@ export const makeT3Tasks = Effect.gen(function* () {
       const readStatuses = query.getSnapshot().pipe(
         Effect.map((current) =>
           waits.map((wait) => {
-            const target = ownedTarget(caller, current.threads, wait.threadId);
+            const target = targetFor(current.threads, wait.threadId);
             const outputToken = taskOutputToken(target, wait.cursor);
             return {
               threadId: wait.threadId,
@@ -232,7 +296,7 @@ export const makeT3Tasks = Effect.gen(function* () {
         ),
       );
       const baselineStatuses = waits.map((wait) => {
-        const target = ownedTarget(caller, snapshot.threads, wait.threadId);
+        const target = targetFor(snapshot.threads, wait.threadId);
         const outputToken = taskOutputToken(target, wait.cursor);
         return {
           threadId: wait.threadId,
@@ -404,12 +468,17 @@ export const makeT3Tasks = Effect.gen(function* () {
   });
 
   const execute = (call: T3TaskToolCall) =>
-    (call.payload.namespace === "t3_tasks"
-      ? executeUnsafe(call.callerThreadId, call.payload.tool, call.payload.arguments)
+    (call.payload.namespace === "t3_tasks" || call.payload.namespace === "t3_threads"
+      ? executeUnsafe(
+          call.callerThreadId,
+          call.payload.namespace,
+          call.payload.tool,
+          call.payload.arguments,
+        )
       : Effect.fail(
           new ToolFailure(
             "invalid_arguments",
-            "Dynamic task calls must use the 't3_tasks' namespace.",
+            "Dynamic thread calls must use the 't3_tasks' or 't3_threads' namespace.",
           ),
         )
     ).pipe(
