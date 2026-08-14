@@ -8,12 +8,17 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
 
 import { EnvironmentId } from "@t3tools/contracts";
+import { detectComposerTrigger, type ComposerTrigger } from "@t3tools/shared/composerTrigger";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import {
+  ComposerEditor,
+  type ComposerEditorHandle,
+  type ComposerEditorSelection,
+} from "../../components/ComposerEditor";
 import {
   ComposerToolbarButton,
   ComposerToolbarRow,
@@ -45,7 +50,15 @@ import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
+import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
+import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import {
+  applyComposerCommandItem,
+  buildComposerCommandItems,
+  shouldShowComposerCommandPopover,
+  type ComposerCommandItem,
+} from "./composer-command-menu";
 import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
@@ -99,7 +112,58 @@ export function NewTaskDraftScreen(props: {
     )?.connectionState === "connected";
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
+  const previousComposerDraftKeyRef = useRef(flow.draftKey);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [composerSelection, setComposerSelection] = useState(() => ({
+    start: flow.prompt.length,
+    end: flow.prompt.length,
+  }));
+  const handleComposerSelectionChange = useCallback((selection: ComposerEditorSelection) => {
+    setComposerSelection(selection);
+  }, []);
+  useEffect(() => {
+    const end = flow.prompt.length;
+    const draftKeyChanged = previousComposerDraftKeyRef.current !== flow.draftKey;
+    previousComposerDraftKeyRef.current = flow.draftKey;
+    setComposerSelection((selection) => {
+      if (draftKeyChanged) {
+        return { start: end, end };
+      }
+      const start = Math.min(selection.start, end);
+      const selectionEnd = Math.min(selection.end, end);
+      if (start === selection.start && selectionEnd === selection.end) {
+        return selection;
+      }
+      return { start, end: selectionEnd };
+    });
+  }, [flow.draftKey, flow.prompt.length]);
+  const composerTrigger = useMemo<ComposerTrigger | null>(() => {
+    if (composerSelection.start !== composerSelection.end) {
+      return null;
+    }
+    return detectComposerTrigger(flow.prompt, composerSelection.end);
+  }, [composerSelection, flow.prompt]);
+  const isPathSearchActive =
+    composerTrigger?.kind === "path" && composerTrigger.query.trim().length > 0;
+  const selectedProjectCwd = selectedProject?.workspaceRoot || null;
+  const pathSearch = useComposerPathSearch({
+    environmentId: isPathSearchActive ? (selectedProject?.environmentId ?? null) : null,
+    cwd: isPathSearchActive ? selectedProjectCwd : null,
+    query: isPathSearchActive ? composerTrigger.query : null,
+  });
+  const composerMenuItems = useMemo(
+    () =>
+      buildComposerCommandItems({
+        trigger: composerTrigger,
+        skills: flow.selectedProviderSkills,
+        pathEntries: pathSearch.entries,
+        includeSlashCommands: false,
+      }),
+    [composerTrigger, flow.selectedProviderSkills, pathSearch.entries],
+  );
+  const showComposerMenu = shouldShowComposerCommandPopover(composerTrigger, {
+    includeSlashCommands: false,
+  });
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: promptInputRef,
     isEditorFocused: isComposerFocused,
@@ -708,6 +772,22 @@ export function NewTaskDraftScreen(props: {
     [flow],
   );
 
+  const handleComposerCommandSelect = useCallback(
+    (item: ComposerCommandItem) => {
+      if (!composerTrigger) {
+        return;
+      }
+      const result = applyComposerCommandItem({
+        text: flow.prompt,
+        trigger: composerTrigger,
+        item,
+      });
+      setComposerSelection({ start: result.cursor, end: result.cursor });
+      flow.setPrompt(result.text);
+    },
+    [composerTrigger, flow],
+  );
+
   async function handleStart(): Promise<void> {
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
@@ -888,7 +968,9 @@ export function NewTaskDraftScreen(props: {
       scrollEnabled={isExpanded}
       value={flow.prompt}
       skills={flow.selectedProviderSkills}
+      selection={composerSelection}
       onChangeText={flow.setPrompt}
+      onSelectionChange={handleComposerSelectionChange}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
@@ -1002,47 +1084,59 @@ export function NewTaskDraftScreen(props: {
                 : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
             }}
           >
-            <ComposerSurface
-              isDarkMode={isDarkMode}
-              style={
-                isExpanded
-                  ? {
-                      borderRadius: 20,
-                      overflow: "hidden",
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                    }
-                  : {
-                      borderRadius: 999,
-                      overflow: "hidden",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingLeft: 18,
-                      paddingRight: 5,
-                      paddingVertical: 5,
-                    }
-              }
-            >
-              {isExpanded && flow.attachments.length > 0 ? (
-                <View className="pb-2.5">
-                  <ComposerAttachmentStrip
-                    attachments={flow.attachments}
-                    onRemove={
-                      isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
-                    }
+            <View className="relative">
+              {showComposerMenu && composerTrigger ? (
+                <View className="absolute inset-x-0 bottom-full z-10 mb-2">
+                  <ComposerCommandPopover
+                    items={composerMenuItems}
+                    triggerKind={composerTrigger.kind}
+                    isLoading={composerTrigger.kind === "path" && pathSearch.isPending}
+                    onSelect={handleComposerCommandSelect}
                   />
                 </View>
               ) : null}
-              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
-              {!isExpanded ? (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canStart}
-                  onPress={() => void handleStart()}
-                />
-              ) : null}
-            </ComposerSurface>
+              <ComposerSurface
+                isDarkMode={isDarkMode}
+                style={
+                  isExpanded
+                    ? {
+                        borderRadius: 20,
+                        overflow: "hidden",
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                      }
+                    : {
+                        borderRadius: 999,
+                        overflow: "hidden",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingLeft: 18,
+                        paddingRight: 5,
+                        paddingVertical: 5,
+                      }
+                }
+              >
+                {isExpanded && flow.attachments.length > 0 ? (
+                  <View className="pb-2.5">
+                    <ComposerAttachmentStrip
+                      attachments={flow.attachments}
+                      onRemove={
+                        isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
+                      }
+                    />
+                  </View>
+                ) : null}
+                <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
+                {!isExpanded ? (
+                  <ControlPill
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canStart}
+                    onPress={() => void handleStart()}
+                  />
+                ) : null}
+              </ComposerSurface>
+            </View>
 
             {isExpanded ? (
               <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
@@ -1067,7 +1161,21 @@ export function NewTaskDraftScreen(props: {
       <NativeStackScreenOptions options={{ title: selectedProject.title }} />
 
       <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-        <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>
+        <View className="min-h-0 flex-1 px-5 pt-2">
+          <View className="relative min-h-0 flex-1">
+            {promptEditor}
+            {showComposerMenu && composerTrigger ? (
+              <View className="absolute inset-x-0 bottom-2 z-10">
+                <ComposerCommandPopover
+                  items={composerMenuItems}
+                  triggerKind={composerTrigger.kind}
+                  isLoading={composerTrigger.kind === "path" && pathSearch.isPending}
+                  onSelect={handleComposerCommandSelect}
+                />
+              </View>
+            ) : null}
+          </View>
+        </View>
 
         <View className="border-t border-border" style={{ paddingBottom: controlsBottomPadding }}>
           {flow.attachments.length > 0 ? (

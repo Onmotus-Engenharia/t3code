@@ -1,42 +1,14 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
-import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
 import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
-export type ComposerCommandItem =
-  | {
-      readonly id: string;
-      readonly type: "path";
-      readonly path: string;
-      readonly kind: "file" | "directory";
-      readonly label: string;
-      readonly description: string;
-    }
-  | {
-      readonly id: string;
-      readonly type: "slash-command";
-      readonly command: string;
-      readonly label: string;
-      readonly description: string;
-    }
-  | {
-      readonly id: string;
-      readonly type: "provider-slash-command";
-      readonly command: ServerProviderSlashCommand;
-      readonly label: string;
-      readonly description: string;
-    }
-  | {
-      readonly id: string;
-      readonly type: "skill";
-      readonly skill: ServerProviderSkill;
-      readonly label: string;
-      readonly description: string;
-    };
+import type { ComposerCommandItem } from "./composer-command-menu";
+
+export type { ComposerCommandItem } from "./composer-command-menu";
 
 interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
@@ -58,15 +30,38 @@ function PopoverSurface(props: {
 
   if (isLiquidGlassSupported) {
     return (
-      <LiquidGlassView
-        effect="clear"
-        interactive={false}
-        tintColor={props.isDarkMode ? "rgba(30,30,32,0.95)" : "rgba(255,255,255,0.92)"}
-        colorScheme={props.isDarkMode ? "dark" : "light"}
-        style={baseStyle}
+      <View
+        style={{
+          borderRadius: 16,
+          shadowColor: "#000000",
+          shadowOpacity: props.isDarkMode ? 0.35 : 0.14,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: 10,
+        }}
       >
-        {props.children}
-      </LiquidGlassView>
+        <LiquidGlassView
+          effect="regular"
+          interactive={false}
+          tintColor={props.isDarkMode ? "rgba(28,28,30,0.88)" : "rgba(255,255,255,0.86)"}
+          colorScheme={props.isDarkMode ? "dark" : "light"}
+          style={[
+            baseStyle,
+            {
+              borderWidth: 1,
+              borderColor: props.isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)",
+            },
+          ]}
+        >
+          <View
+            style={{
+              backgroundColor: props.isDarkMode ? "rgba(28,28,30,0.54)" : "rgba(255,255,255,0.58)",
+            }}
+          >
+            {props.children}
+          </View>
+        </LiquidGlassView>
+      </View>
     );
   }
 
