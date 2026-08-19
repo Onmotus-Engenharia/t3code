@@ -100,6 +100,16 @@ This is useful when a Codex-compatible setup needs account-specific variables. A
 the provider instance that should receive them, and mark API keys or tokens as sensitive. Sensitive
 values are stored as server secrets and are not sent back to the app after saving.
 
+## Codex MCP Servers
+
+T3 Code uses the MCP servers configured in the selected Codex home. Before starting a turn, T3 Code
+refreshes the Codex MCP tool catalog and waits for every configured server to finish starting. If a
+server fails or is cancelled, the turn does not start with a partial tool catalog; the thread reports
+the server name and Codex startup error instead.
+
+If Codex reports that an MCP server timed out, adjust that server's `startup_timeout_sec` in the
+Codex `config.toml`, then retry the turn.
+
 ## Can I Switch Accounts In An Existing Thread?
 
 Yes, when both Codex providers share the same `CODEX_HOME path`.

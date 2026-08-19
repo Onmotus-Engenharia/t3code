@@ -35,6 +35,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
+import { CodexMcpStartupError, makeCodexMcpStartupGate } from "./CodexMcpStartup.ts";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -172,7 +173,8 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimePendingApprovalNotFoundError
   | CodexSessionRuntimePendingUserInputNotFoundError
   | CodexSessionRuntimeInvalidUserInputAnswersError
-  | CodexSessionRuntimeThreadIdMissingError;
+  | CodexSessionRuntimeThreadIdMissingError
+  | CodexMcpStartupError;
 
 export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
@@ -891,6 +893,7 @@ export const makeCodexSessionRuntime = (
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const closedRef = yield* Ref.make(false);
+    const mcpStartupGate = yield* makeCodexMcpStartupGate();
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -1638,6 +1641,20 @@ export const makeCodexSessionRuntime = (
       Effect.fail(CodexErrors.CodexAppServerRequestError.methodNotFound(method)),
     );
 
+    yield* client.handleServerNotification("mcpServer/startupStatus/updated", (params) =>
+      mcpStartupGate
+        .handleUpdate(params)
+        .pipe(
+          Effect.andThen(
+            Queue.offer(
+              serverNotifications,
+              makeCodexServerNotification("mcpServer/startupStatus/updated", params),
+            ),
+          ),
+          Effect.asVoid,
+        ),
+    );
+
     const registerServerNotification = <M extends CodexRpc.ServerNotificationMethod>(method: M) =>
       client.handleServerNotification(method, (params) =>
         Queue.offer(serverNotifications, makeCodexServerNotification(method, params)).pipe(
@@ -1646,8 +1663,8 @@ export const makeCodexSessionRuntime = (
       );
 
     yield* Effect.forEach(
-      Object.values(
-        CodexRpc.SERVER_NOTIFICATION_METHODS,
+      Object.values(CodexRpc.SERVER_NOTIFICATION_METHODS).filter(
+        (method) => method !== "mcpServer/startupStatus/updated",
       ) as ReadonlyArray<CodexRpc.ServerNotificationMethod>,
       registerServerNotification,
       { concurrency: 1, discard: true },
@@ -1802,13 +1819,7 @@ export const makeCodexSessionRuntime = (
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           if (hasConfiguredMcpServer(options.appServerArgs)) {
-            yield* client.request("config/mcpServer/reload", undefined).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
-                  cause,
-                }),
-              ),
-            );
+            yield* mcpStartupGate.refresh(client.request("config/mcpServer/reload", undefined));
           }
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
