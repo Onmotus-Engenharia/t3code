@@ -13,6 +13,11 @@ interface ActiveMcpRefresh {
   readonly statuses: ReadonlyMap<string, CodexMcpStartupUpdate>;
 }
 
+interface McpStartupGateState {
+  readonly activeRefresh: ActiveMcpRefresh | undefined;
+  readonly latestStatuses: ReadonlyMap<string, CodexMcpStartupUpdate>;
+}
+
 const CodexMcpStartupFailure = Schema.Struct({
   error: Schema.optional(Schema.String),
   failureReason: Schema.optional(Schema.String),
@@ -53,18 +58,28 @@ const completeIfTerminal = (state: ActiveMcpRefresh) => {
 };
 
 export const makeCodexMcpStartupGate = Effect.fn("makeCodexMcpStartupGate")(function* () {
-  const activeRefreshRef = yield* Ref.make<ActiveMcpRefresh | undefined>(undefined);
+  const stateRef = yield* Ref.make<McpStartupGateState>({
+    activeRefresh: undefined,
+    latestStatuses: new Map(),
+  });
   const refreshMutex = yield* Semaphore.make(1);
 
   const handleUpdate = Effect.fn("CodexMcpStartupGate.handleUpdate")(function* (
     update: CodexMcpStartupUpdate,
   ) {
-    const next = yield* Ref.modify(activeRefreshRef, (current) => {
-      if (!current) return [undefined, current] as const;
-      const statuses = new Map(current.statuses);
+    const next = yield* Ref.modify(stateRef, (state) => {
+      const latestStatuses = new Map(state.latestStatuses);
+      latestStatuses.set(update.name, update);
+      if (!state.activeRefresh) {
+        return [undefined, { ...state, latestStatuses }] as const;
+      }
+      const statuses = new Map(state.activeRefresh.statuses);
       statuses.set(update.name, update);
-      const updated = { ...current, statuses } satisfies ActiveMcpRefresh;
-      return [updated, updated] as const;
+      const activeRefresh = {
+        ...state.activeRefresh,
+        statuses,
+      } satisfies ActiveMcpRefresh;
+      return [activeRefresh, { activeRefresh, latestStatuses }] as const;
     });
     if (next) yield* completeIfTerminal(next);
   });
@@ -72,17 +87,23 @@ export const makeCodexMcpStartupGate = Effect.fn("makeCodexMcpStartupGate")(func
   const refreshUnlocked = <A, E>(reload: Effect.Effect<A, E>) =>
     Effect.gen(function* () {
       const completion = yield* Deferred.make<ReadonlyArray<CodexMcpStartupUpdate>>();
-      yield* Ref.set(activeRefreshRef, {
-        completion,
-        reloadCompleted: false,
-        statuses: new Map(),
-      });
+      yield* Ref.update(stateRef, (state) => ({
+        ...state,
+        activeRefresh: {
+          completion,
+          reloadCompleted: false,
+          statuses: new Map(state.latestStatuses),
+        },
+      }));
 
       yield* reload;
-      const completedReload = yield* Ref.modify(activeRefreshRef, (current) => {
-        if (!current) return [undefined, current] as const;
-        const updated = { ...current, reloadCompleted: true } satisfies ActiveMcpRefresh;
-        return [updated, updated] as const;
+      const completedReload = yield* Ref.modify(stateRef, (state) => {
+        if (!state.activeRefresh) return [undefined, state] as const;
+        const activeRefresh = {
+          ...state.activeRefresh,
+          reloadCompleted: true,
+        } satisfies ActiveMcpRefresh;
+        return [activeRefresh, { ...state, activeRefresh }] as const;
       });
       if (completedReload) yield* completeIfTerminal(completedReload);
 
@@ -99,7 +120,14 @@ export const makeCodexMcpStartupGate = Effect.fn("makeCodexMcpStartupGate")(func
         ];
       });
       if (failures.length > 0) return yield* new CodexMcpStartupError({ failures });
-    }).pipe(Effect.ensuring(Ref.set(activeRefreshRef, undefined)));
+    }).pipe(
+      Effect.ensuring(
+        Ref.update(stateRef, (state) => ({
+          ...state,
+          activeRefresh: undefined,
+        })),
+      ),
+    );
 
   const refresh = <A, E>(reload: Effect.Effect<A, E>) =>
     refreshMutex.withPermits(1)(refreshUnlocked(reload));
