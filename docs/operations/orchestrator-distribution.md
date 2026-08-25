@@ -59,10 +59,10 @@ Install dependencies, regenerate/check icons, then build a version with a custom
 ```sh
 vp i
 vp run icons:orchestrator
-vp run dist:desktop:dmg:arm64 --build-version 0.0.33-orchestrator.1
-vp run dist:desktop:dmg:x64 --build-version 0.0.33-orchestrator.1
-vp run dist:desktop:win:x64 --build-version 0.0.33-orchestrator.1
-vp run dist:desktop:win:arm64 --build-version 0.0.33-orchestrator.1
+vp run dist:desktop:dmg:arm64 --build-version 0.0.33-orchestrator.4
+vp run dist:desktop:dmg:x64 --build-version 0.0.33-orchestrator.4
+vp run dist:desktop:win:x64 --build-version 0.0.33-orchestrator.4
+vp run dist:desktop:win:arm64 --build-version 0.0.33-orchestrator.4
 ```
 
 Run Windows packaging on the matching Windows or approved CI runner. Do not publish or start CI
