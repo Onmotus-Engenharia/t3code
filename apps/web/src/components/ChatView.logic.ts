@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type MessageId,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -149,6 +150,50 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   return {
     threadId: thread.id,
     ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
+  };
+}
+
+export const NUDGE_AGENT_MESSAGE = "Continue.";
+
+export function nudgeAgentFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Failed to nudge agent.";
+}
+
+/** Builds the fixed, visible user message used to steer a running thread. */
+export function buildNudgeAgentTurnInput(input: {
+  thread: Pick<Thread, "id" | "title" | "modelSelection" | "runtimeMode" | "interactionMode">;
+  messageId: MessageId;
+  createdAt: string;
+}) {
+  return {
+    threadId: input.thread.id,
+    message: {
+      messageId: input.messageId,
+      role: "user" as const,
+      text: NUDGE_AGENT_MESSAGE,
+      attachments: [],
+    },
+    modelSelection: input.thread.modelSelection,
+    titleSeed: input.thread.title,
+    runtimeMode: input.thread.runtimeMode,
+    interactionMode: input.thread.interactionMode,
+    createdAt: input.createdAt,
+  };
+}
+
+/** Serializes a manual action without coupling it to the regular composer send state. */
+export function createNudgeAgentRequestGate() {
+  let inFlight = false;
+
+  return async (request: () => Promise<void>): Promise<boolean> => {
+    if (inFlight) return false;
+    inFlight = true;
+    try {
+      await request();
+      return true;
+    } finally {
+      inFlight = false;
+    }
   };
 }
 

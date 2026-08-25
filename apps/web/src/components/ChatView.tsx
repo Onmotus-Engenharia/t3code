@@ -285,9 +285,11 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
+  buildNudgeAgentTurnInput,
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  createNudgeAgentRequestGate,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -296,6 +298,8 @@ import {
   scheduleEnvironmentReconnectWarning,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  NUDGE_AGENT_MESSAGE,
+  nudgeAgentFailureMessage,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -1374,6 +1378,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [nudgeAgentPending, setNudgeAgentPending] = useState(false);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -1450,6 +1455,7 @@ function ChatViewContent(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const nudgeAgentRequestGateRef = useRef(createNudgeAgentRequestGate());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -5398,6 +5404,68 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
 
+  const onNudgeAgent = useCallback(() => {
+    void nudgeAgentRequestGateRef.current(async () => {
+      if (!activeThread || !isServerThread || activeEnvironmentUnavailable) return;
+
+      const threadIdForSend = activeThread.id;
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      setNudgeAgentPending(true);
+      setThreadError(threadIdForSend, null);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: NUDGE_AGENT_MESSAGE,
+          turnId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+
+      try {
+        const result = await startThreadTurn({
+          environmentId,
+          input: buildNudgeAgentTurnInput({
+            thread: activeThread,
+            messageId: messageIdForSend,
+            createdAt: messageCreatedAt,
+          }),
+        });
+        if (result._tag === "Success") {
+          acknowledgeActiveThreadWoke();
+          return;
+        }
+
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(threadIdForSend, nudgeAgentFailureMessage(error));
+        }
+      } catch (error) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        setThreadError(threadIdForSend, nudgeAgentFailureMessage(error));
+      } finally {
+        setNudgeAgentPending(false);
+      }
+    });
+  }, [
+    acknowledgeActiveThreadWoke,
+    activeEnvironmentUnavailable,
+    activeThread,
+    environmentId,
+    isServerThread,
+    setThreadError,
+    startThreadTurn,
+  ]);
+
   const onInterrupt = async () => {
     if (!activeThread) return;
     const result = await interruptThreadTurn({
@@ -6226,9 +6294,11 @@ function ChatViewContent(props: ChatViewProps) {
             gitCwd={gitCwd}
             taskOrchestrationEnabled={activeThreadShell?.taskOrchestrationEnabled ?? true}
             taskOrchestrationPending={taskOrchestrationPending}
+            nudgeAgentPending={nudgeAgentPending}
             taskRelation={activeThreadShell?.taskRelation ?? null}
             showTaskOrchestrationControl={isServerThread}
             onSetTaskOrchestrationEnabled={handleSetTaskOrchestrationEnabled}
+            onNudgeAgent={onNudgeAgent}
             onOpenParentThread={handleOpenParentThread}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}

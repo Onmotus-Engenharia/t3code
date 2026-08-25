@@ -97,7 +97,7 @@ const contextHealth = (input: {
 });
 
 effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
-  it.effect("coordinates task operations and context-health-safe reuse", () =>
+  it.effect("steers active direct tasks while preserving ownership and inactive reuse safety", () =>
     Effect.gen(function* () {
       const caller = {
         ...thread({ id: "root" }),
@@ -134,6 +134,14 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
           depth: 2,
           workspaceMode: "shared" as const,
           createdBy: "agent" as const,
+        },
+        latestTurn: {
+          turnId: TurnId.make("grandchild-active-turn"),
+          state: "running" as const,
+          requestedAt: "2026-07-28T00:00:00.000Z",
+          startedAt: "2026-07-28T00:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
         },
       } as unknown as OrchestrationThread;
       const unrelated = {
@@ -210,17 +218,21 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
                     ...snapshot,
                     threads: snapshot.threads.map((candidate) =>
                       candidate.id === command.threadId
-                        ? {
-                            ...candidate,
-                            latestTurn: {
-                              turnId: TurnId.make("turn-started"),
-                              state: "running" as const,
-                              requestedAt: command.createdAt,
-                              startedAt: command.createdAt,
-                              completedAt: null,
-                              assistantMessageId: null,
-                            },
-                          }
+                        ? candidate.latestTurn?.state === "running" ||
+                          candidate.session?.status === "starting" ||
+                          candidate.session?.status === "running"
+                          ? candidate
+                          : {
+                              ...candidate,
+                              latestTurn: {
+                                turnId: TurnId.make("turn-started"),
+                                state: "running" as const,
+                                requestedAt: command.createdAt,
+                                startedAt: command.createdAt,
+                                completedAt: null,
+                                assistantMessageId: null,
+                              },
+                            }
                         : candidate,
                     ),
                   }))
@@ -358,18 +370,25 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
         (body(rootGrandchildRead).error as { code?: string }).code,
         "ownership_denied",
       );
+      const rootGrandchildMessage = yield* call("message", {
+        threadId: "grandchild",
+        message: "attempt to steer a grandchild directly",
+      });
+      NodeAssert.equal(rootGrandchildMessage.success, false);
+      NodeAssert.equal(
+        (body(rootGrandchildMessage).error as { code?: string }).code,
+        "ownership_denied",
+      );
       const childGrandchildRead = yield* callAs("child", "read", { threadId: "grandchild" });
       NodeAssert.equal(childGrandchildRead.success, true);
       NodeAssert.equal(body(childGrandchildRead).threadId, "grandchild");
       const childGrandchildMessage = yield* callAs("child", "message", {
         threadId: "grandchild",
-        message: "reuse only when safe",
+        message: "steer the active grandchild",
       });
-      NodeAssert.equal(childGrandchildMessage.success, false);
-      NodeAssert.equal(
-        (body(childGrandchildMessage).error as { code?: string }).code,
-        "unsafe_reuse",
-      );
+      NodeAssert.equal(childGrandchildMessage.success, true);
+      NodeAssert.equal(body(childGrandchildMessage).turnId, null);
+      NodeAssert.equal(body(childGrandchildMessage).status, "requested");
       const invalidDepth = yield* callAs("child", "orchestration", {
         threadId: "grandchild",
         enabled: true,
@@ -538,12 +557,13 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             : candidate,
         ),
       }));
-      const rejectedMessage = yield* call("message", {
+      const activeMessage = yield* call("message", {
         threadId: "child",
-        message: "too soon",
+        message: "steer the active child",
       });
-      NodeAssert.equal(rejectedMessage.success, false);
-      NodeAssert.match((body(rejectedMessage).error as { message: string }).message, /active/);
+      NodeAssert.equal(activeMessage.success, true);
+      NodeAssert.equal(body(activeMessage).turnId, null);
+      NodeAssert.equal(body(activeMessage).status, "requested");
       yield* Ref.update(snapshotRef, (snapshot) => ({
         ...snapshot,
         threads: snapshot.threads.map((candidate) =>
@@ -702,14 +722,10 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             : candidate,
         ),
       }));
-      const messaging = yield* Effect.forkChild(
-        call("message", { threadId: "child", message: "follow up" }),
-      );
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust("25 millis");
-      const message = yield* Fiber.join(messaging);
+      const message = yield* call("message", { threadId: "child", message: "follow up" });
       NodeAssert.equal(message.success, true);
-      NodeAssert.equal(body(message).turnId, "turn-started");
+      NodeAssert.equal(body(message).turnId, null);
+      NodeAssert.equal(body(message).status, "requested");
       NodeAssert.deepStrictEqual(
         body(message).contextHealth,
         contextHealth({

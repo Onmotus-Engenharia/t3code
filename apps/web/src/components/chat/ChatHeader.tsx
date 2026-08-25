@@ -11,7 +11,13 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon, CornerUpLeftIcon, LoaderCircleIcon, WorkflowIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CornerUpLeftIcon,
+  HeartPulseIcon,
+  LoaderCircleIcon,
+  WorkflowIcon,
+} from "lucide-react";
 import {
   memo,
   useCallback,
@@ -62,9 +68,11 @@ interface ChatHeaderProps {
   gitCwd: string | null;
   taskOrchestrationEnabled: boolean;
   taskOrchestrationPending: boolean;
+  nudgeAgentPending: boolean;
   taskRelation: TaskRelation | null;
   showTaskOrchestrationControl: boolean;
   onSetTaskOrchestrationEnabled: (enabled: boolean) => void;
+  onNudgeAgent: () => void;
   onOpenParentThread: () => void;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -102,6 +110,41 @@ export function shouldShowOpenInPicker(input: {
   );
 }
 
+export function shouldShowNudgeAgentControl(isServerThread: boolean): boolean {
+  return isServerThread;
+}
+
+export function NudgeAgentControl({
+  pending,
+  onNudgeAgent,
+}: {
+  pending: boolean;
+  onNudgeAgent: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Nudge agent"
+            disabled={pending}
+            onClick={onNudgeAgent}
+            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60"
+          />
+        }
+      >
+        {pending ? (
+          <LoaderCircleIcon className="size-3.5 animate-spin" />
+        ) : (
+          <HeartPulseIcon className="size-3.5" />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">Nudge agent</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
@@ -120,9 +163,11 @@ export const ChatHeader = memo(function ChatHeader({
   gitCwd,
   taskOrchestrationEnabled,
   taskOrchestrationPending,
+  nudgeAgentPending,
   taskRelation,
   showTaskOrchestrationControl,
   onSetTaskOrchestrationEnabled,
+  onNudgeAgent,
   onOpenParentThread,
   onNewThreadInProject,
   onRunProjectScript,
@@ -364,6 +409,9 @@ export const ChatHeader = memo(function ChatHeader({
             </TooltipTrigger>
             <TooltipPopup side="bottom">Allow this thread to create and control tasks</TooltipPopup>
           </Tooltip>
+        ) : null}
+        {shouldShowNudgeAgentControl(isServerThread) ? (
+          <NudgeAgentControl pending={nudgeAgentPending} onNudgeAgent={onNudgeAgent} />
         ) : null}
         {activeProjectScripts && (
           <ProjectScriptsControl

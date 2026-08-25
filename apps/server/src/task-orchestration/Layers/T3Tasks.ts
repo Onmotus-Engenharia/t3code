@@ -348,31 +348,15 @@ export const makeT3Tasks = Effect.gen(function* () {
 
     if (tool === "message") {
       const target = ownedTarget(caller, snapshot.threads, requiredString(args, "threadId"));
-      if (
-        target.latestTurn?.state === "running" ||
-        target.session?.status === "starting" ||
-        target.session?.status === "running"
-      ) {
-        return fail(
-          "invalid_arguments",
-          `Task '${target.id}' is active and cannot accept another message yet.`,
-        );
-      }
       const projectedBeforeDispatch = yield* query.getThreadDetailById(target.id);
       const freshTarget = Option.getOrUndefined(projectedBeforeDispatch);
       if (!freshTarget) return fail("not_found", `Task '${target.id}' was not found.`);
-      if (
+      const active =
         freshTarget.latestTurn?.state === "running" ||
         freshTarget.session?.status === "starting" ||
-        freshTarget.session?.status === "running"
-      ) {
-        return fail(
-          "invalid_arguments",
-          `Task '${freshTarget.id}' is active and cannot accept another message yet.`,
-        );
-      }
+        freshTarget.session?.status === "running";
       const contextHealth = deriveTaskContextHealth(freshTarget);
-      if (!contextHealth.reuseAllowed) {
+      if (!active && !contextHealth.reuseAllowed) {
         return fail(
           "unsafe_reuse",
           `Task '${freshTarget.id}' cannot be reused because its context is ${contextHealth.reason}.`,
@@ -380,13 +364,10 @@ export const makeT3Tasks = Effect.gen(function* () {
         );
       }
       yield* dispatchTurn(freshTarget, requiredString(args, "message"));
-      yield* Effect.sleep("25 millis");
-      const projected = yield* query.getThreadDetailById(freshTarget.id);
-      const updated = Option.getOrUndefined(projected);
       return {
         threadId: freshTarget.id,
-        turnId: updated?.latestTurn?.turnId ?? null,
-        status: updated ? threadStatus(updated) : "requested",
+        turnId: null,
+        status: "requested",
         contextHealth,
       };
     }

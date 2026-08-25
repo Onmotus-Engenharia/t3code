@@ -15,8 +15,10 @@ import {
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
+  buildNudgeAgentTurnInput,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
+  createNudgeAgentRequestGate,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
@@ -24,6 +26,7 @@ import {
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  nudgeAgentFailureMessage,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
@@ -225,6 +228,65 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("buildNudgeAgentTurnInput", () => {
+  it("sends the fixed visible Continue message without composer input", () => {
+    expect(
+      buildNudgeAgentTurnInput({
+        thread: makeThread({
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId: TurnId.make("turn-running"),
+          },
+        }),
+        messageId: MessageId.make("message-nudge"),
+        createdAt: now,
+      }),
+    ).toMatchObject({
+      threadId,
+      message: {
+        messageId: MessageId.make("message-nudge"),
+        role: "user",
+        text: "Continue.",
+        attachments: [],
+      },
+      titleSeed: "Thread",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: now,
+    });
+  });
+});
+
+describe("nudgeAgentFailureMessage", () => {
+  it("keeps command failures visible to the existing thread error banner", () => {
+    expect(nudgeAgentFailureMessage(new Error("The agent is unavailable."))).toBe(
+      "The agent is unavailable.",
+    );
+    expect(nudgeAgentFailureMessage(null)).toBe("Failed to nudge agent.");
+  });
+});
+
+describe("createNudgeAgentRequestGate", () => {
+  it("allows one in-flight nudge and releases after a request failure", async () => {
+    let resolveFirst: (() => void) | undefined;
+    const first = new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const gate = createNudgeAgentRequestGate();
+    const request = vi.fn(() => first);
+
+    const firstResult = gate(request);
+    await expect(gate(request)).resolves.toBe(false);
+    expect(request).toHaveBeenCalledOnce();
+
+    resolveFirst?.();
+    await expect(firstResult).resolves.toBe(true);
+    await expect(gate(async () => Promise.reject(new Error("offline")))).rejects.toThrow("offline");
+    await expect(gate(async () => undefined)).resolves.toBe(true);
   });
 });
 

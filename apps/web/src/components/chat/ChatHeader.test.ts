@@ -1,7 +1,15 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveRenameCommit, shouldShowOpenInPicker } from "./ChatHeader";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
+
+import {
+  NudgeAgentControl,
+  resolveRenameCommit,
+  shouldShowNudgeAgentControl,
+  shouldShowOpenInPicker,
+} from "./ChatHeader";
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");
@@ -65,5 +73,30 @@ describe("resolveRenameCommit", () => {
     expect(resolveRenameCommit({ title: " Old ", originalTitle: "Old" })).toEqual({
       action: "noop",
     });
+  });
+});
+
+describe("NudgeAgentControl", () => {
+  it("is visible for durable server threads, including when Working", () => {
+    expect(shouldShowNudgeAgentControl(true)).toBe(true);
+    expect(shouldShowNudgeAgentControl(false)).toBe(false);
+  });
+
+  it("renders an accessible compact control with its tooltip while working", () => {
+    const html = renderToStaticMarkup(
+      createElement(NudgeAgentControl, { pending: false, onNudgeAgent: () => undefined }),
+    );
+
+    expect(html).toContain('aria-label="Nudge agent"');
+    expect(html).toContain("Nudge agent");
+    expect(html).not.toMatch(/\sdisabled(?:=|\s|>)/);
+  });
+
+  it("disables only while its own nudge request is in flight", () => {
+    const html = renderToStaticMarkup(
+      createElement(NudgeAgentControl, { pending: true, onNudgeAgent: () => undefined }),
+    );
+
+    expect(html).toMatch(/\sdisabled(?:=|\s|>)/);
   });
 });
