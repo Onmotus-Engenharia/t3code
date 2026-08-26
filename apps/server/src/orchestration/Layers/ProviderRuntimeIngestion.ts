@@ -1529,6 +1529,17 @@ const make = Effect.gen(function* () {
             return true;
           case "turn.started":
             return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
+          case "turn.aborted":
+            if (conflictsWithActiveTurn) {
+              return false;
+            }
+            // An abort without a provider turn id still unambiguously applies
+            // to the active turn on this thread. Unlike an untargeted
+            // turn.completed, it is not emitted by provider resume handshakes.
+            if (activeTurnId !== null) {
+              return eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
+            }
+            return eventTurnId !== undefined;
           case "turn.completed":
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
               return false;
@@ -1560,6 +1571,7 @@ const make = Effect.gen(function* () {
         event.type === "session.exited" ||
         event.type === "thread.started" ||
         event.type === "turn.started" ||
+        event.type === "turn.aborted" ||
         event.type === "turn.completed"
       ) {
         const status = (() => {
@@ -1572,10 +1584,16 @@ const make = Effect.gen(function* () {
               return "running";
             case "session.exited":
               return "stopped";
-            case "turn.completed":
-              return normalizeRuntimeTurnState(event.payload.state) === "failed"
+            case "turn.aborted":
+              return "interrupted";
+            case "turn.completed": {
+              const turnState = normalizeRuntimeTurnState(event.payload.state);
+              return turnState === "failed"
                 ? "error"
-                : "ready";
+                : turnState === "interrupted" || turnState === "cancelled"
+                  ? "interrupted"
+                  : "ready";
+            }
             case "session.started":
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
@@ -1586,7 +1604,9 @@ const make = Effect.gen(function* () {
         const nextActiveTurnId =
           event.type === "turn.started"
             ? (eventTurnId ?? null)
-            : event.type === "turn.completed" || event.type === "session.exited"
+            : event.type === "turn.aborted" ||
+                event.type === "turn.completed" ||
+                event.type === "session.exited"
               ? null
               : event.type === "session.state.changed" &&
                   !sessionStatusAllowsActiveTurn(

@@ -319,6 +319,59 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       }),
   );
 
+  it.effect("keeps routing notifications while a server request handler is pending", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const requestStarted = yield* Deferred.make<void>();
+      const releaseRequest = yield* Deferred.make<void>();
+      const notificationHandled = yield* Deferred.make<void>();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onRequest: () =>
+          Deferred.succeed(requestStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRequest)),
+            Effect.as({ answers: {} }),
+          ),
+        onNotification: () => Deferred.succeed(notificationHandled, undefined).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            id: 77,
+            method: "item/tool/requestUserInput",
+            params: {
+              itemId: "item-approval-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              questions: [],
+            },
+          })}\n${encodeUnknownJsonString({
+            method: "item/agentMessage/delta",
+            params: {
+              delta: "still alive",
+              itemId: "item-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+            },
+          })}\n`,
+        ),
+      );
+
+      yield* Deferred.await(requestStarted);
+      yield* Effect.yieldNow;
+      const routedWhileRequestPending = yield* Deferred.isDone(notificationHandled);
+      yield* Deferred.succeed(releaseRequest, undefined);
+
+      assert.isTrue(routedWhileRequestPending);
+      assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
+        id: 77,
+        result: { answers: {} },
+      });
+    }),
+  );
+
   it.effect("surfaces JSON encoding failures as protocol parse errors", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();

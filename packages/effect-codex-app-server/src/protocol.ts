@@ -159,6 +159,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const nextRequestId = yield* Ref.make(1);
     const remainder = yield* Ref.make("");
     const terminationHandled = yield* Ref.make(false);
+    const protocolScope = yield* Effect.scope;
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
       if (event.direction === "incoming" && !options.logIncoming) {
@@ -285,6 +286,11 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                     ),
                   onSuccess: (result) => respond(request.id, result),
                 }),
+                // A dynamic tool or approval may remain open while the peer
+                // emits item and turn notifications. Keep draining stdin so
+                // those lifecycle events cannot queue behind the request.
+                Effect.forkIn(protocolScope),
+                Effect.asVoid,
               )
             : Effect.void,
         ),
