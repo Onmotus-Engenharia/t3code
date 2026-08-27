@@ -309,7 +309,6 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       settledAt: null,
       taskOrchestrationEnabled: false,
       taskRelation: null,
-      pinned: false,
       session: null,
       latestUserMessageAt: null,
       hasPendingApprovals: false,
@@ -460,7 +459,6 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           settledAt: null,
           taskOrchestrationEnabled: false,
           taskRelation: null,
-          pinned: false,
           session: {
             threadId,
             status: "running",
@@ -621,7 +619,6 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           settledAt: null,
           taskOrchestrationEnabled: false,
           taskRelation: null,
-          pinned: false,
           session: {
             threadId,
             status: "running",

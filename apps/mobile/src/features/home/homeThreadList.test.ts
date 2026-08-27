@@ -42,7 +42,7 @@ function makeThread(
     archivedAt: null,
     taskOrchestrationEnabled: false,
     taskRelation: null,
-    pinned: false,
+    pinnedAt: null,
     session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,

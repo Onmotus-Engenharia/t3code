@@ -46,7 +46,6 @@ function makeReadModel(input: {
         snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? PINNED_AT : null),
         taskOrchestrationEnabled: false,
         taskRelation: null,
-        pinned: input.pinnedAt != null,
         pinnedAt: input.pinnedAt ?? null,
         pinOrderKey: input.pinOrderKey ?? null,
         deletedAt: null,

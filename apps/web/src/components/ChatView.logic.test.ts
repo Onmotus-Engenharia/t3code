@@ -249,7 +249,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     settledAt: null,
     taskOrchestrationEnabled: false,
     taskRelation: null,
-    pinned: false,
+    pinnedAt: null,
     deletedAt: null,
     latestTurn: null,
     branch: null,
@@ -308,7 +308,7 @@ describe("buildLoadingThreadFromShell", () => {
       hasActionableProposedPlan: false,
       taskOrchestrationEnabled: false,
       taskRelation: null,
-      pinned: false,
+      pinnedAt: null,
     } satisfies ThreadShell;
 
     expect(buildLoadingThreadFromShell(shell)).toMatchObject({

@@ -95,7 +95,6 @@ describe("orchestration projector", () => {
         snoozedAt: null,
         taskOrchestrationEnabled: false,
         taskRelation: null,
-        pinned: false,
         deletedAt: null,
         messages: [],
         proposedPlans: [],
@@ -249,7 +248,7 @@ describe("orchestration projector", () => {
     );
 
     expect(pinned.threads[0]?.taskOrchestrationEnabled).toBe(true);
-    expect(pinned.threads[0]?.pinned).toBe(true);
+    expect(pinned.threads[0]?.pinnedAt).toBe(now);
     expect(pinned.threads[0]?.settledOverride).toBe(null);
   });
 

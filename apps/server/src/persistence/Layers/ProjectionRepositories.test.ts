@@ -52,7 +52,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         snoozedAt: null,
         taskOrchestrationEnabled: 1,
         taskRelation: relation,
-        pinned: 1,
         pinnedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -64,7 +63,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const persisted = yield* threads.getById({ threadId: ThreadId.make("child") });
       assert.strictEqual(Option.getOrThrow(persisted).taskOrchestrationEnabled, 1);
       assert.deepStrictEqual(Option.getOrThrow(persisted).taskRelation, relation);
-      assert.strictEqual(Option.getOrThrow(persisted).pinned, 1);
     }),
   );
 
@@ -146,7 +144,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         snoozedAt: null,
         taskOrchestrationEnabled: 0,
         taskRelation: null,
-        pinned: 0,
         pinnedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -212,7 +209,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         snoozedAt: "2026-03-25T00:00:00.000Z",
         taskOrchestrationEnabled: 0,
         taskRelation: null,
-        pinned: 0,
         pinnedAt: "2026-03-25T00:00:00.000Z",
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -242,6 +238,8 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        taskOrchestrationEnabled: 0,
+        taskRelation: null,
         pinnedAt: null,
       });
       const repersisted = yield* threads.getById({
@@ -287,6 +285,8 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        taskOrchestrationEnabled: 0,
+        taskRelation: null,
         pinnedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,

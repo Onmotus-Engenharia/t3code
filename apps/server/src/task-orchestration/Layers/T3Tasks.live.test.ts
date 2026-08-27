@@ -39,7 +39,6 @@ const thread = (input: {
     latestTurn: null,
     worktreePath: null,
     title: input.id,
-    pinned: false,
     messages: [],
     activities: [],
     modelSelection: {
@@ -828,12 +827,8 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       );
       NodeAssert.ok(dispatched.some((command) => command.type === "thread.turn.start"));
       NodeAssert.ok(dispatched.some((command) => command.type === "thread.turn.interrupt"));
-      NodeAssert.ok(
-        dispatched.some((command) => command.type === "thread.pin.set" && command.pinned),
-      );
-      NodeAssert.ok(
-        dispatched.some((command) => command.type === "thread.pin.set" && !command.pinned),
-      );
+      NodeAssert.ok(dispatched.some((command) => command.type === "thread.pin"));
+      NodeAssert.ok(dispatched.some((command) => command.type === "thread.unpin"));
       NodeAssert.ok(
         dispatched.some(
           (command) =>

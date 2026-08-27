@@ -9,7 +9,7 @@ import {
   ThreadRuntimeModeSetPayload as ContractsThreadRuntimeModeSetPayloadSchema,
   ThreadInteractionModeSetPayload as ContractsThreadInteractionModeSetPayloadSchema,
   ThreadTaskOrchestrationSetPayload as ContractsThreadTaskOrchestrationSetPayloadSchema,
-  ThreadPinSetPayload as ContractsThreadPinSetPayloadSchema,
+  LegacyThreadPinSetPayload as ContractsLegacyThreadPinSetPayloadSchema,
   ThreadDeletedPayload as ContractsThreadDeletedPayloadSchema,
   ThreadUnarchivedPayload as ContractsThreadUnarchivedPayloadSchema,
   ThreadUnsettledPayload as ContractsThreadUnsettledPayloadSchema,
@@ -43,7 +43,9 @@ export const ThreadMetaUpdatedPayload = ContractsThreadMetaUpdatedPayloadSchema;
 export const ThreadRuntimeModeSetPayload = ContractsThreadRuntimeModeSetPayloadSchema;
 export const ThreadInteractionModeSetPayload = ContractsThreadInteractionModeSetPayloadSchema;
 export const ThreadTaskOrchestrationSetPayload = ContractsThreadTaskOrchestrationSetPayloadSchema;
-export const ThreadPinSetPayload = ContractsThreadPinSetPayloadSchema;
+// Decode-only bridge for persisted fork events. New commands/events use the
+// canonical thread.pin/thread.unpin pair.
+export const LegacyThreadPinSetPayload = ContractsLegacyThreadPinSetPayloadSchema;
 export const ThreadDeletedPayload = ContractsThreadDeletedPayloadSchema;
 export const ThreadUnarchivedPayload = ContractsThreadUnarchivedPayloadSchema;
 export const ThreadUnsettledPayload = ContractsThreadUnsettledPayloadSchema;

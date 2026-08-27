@@ -155,7 +155,6 @@ function makeShell(input: {
     settledAt: input.settledOverride === "settled" ? NOW : null,
     taskOrchestrationEnabled: false,
     taskRelation: null,
-    pinned: false,
     session:
       input.sessionStatus === undefined
         ? null

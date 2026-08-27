@@ -645,7 +645,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             snoozedAt: null,
             taskOrchestrationEnabled: event.payload.taskOrchestrationEnabled ? 1 : 0,
             taskRelation: event.payload.taskRelation,
-            pinned: event.payload.pinned ? 1 : 0,
             pinnedAt: null,
             pinOrderKey: null,
             titleRegenerationRequestId: null,
@@ -888,7 +887,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            pinned: event.payload.pinned ? 1 : 0,
+            // Decode-only bridge for persisted fork history. The legacy column
+            // is intentionally never written again; canonical pinned_at is
+            // the single projected source of truth.
+            pinnedAt: event.payload.pinned ? event.occurredAt : null,
+            pinOrderKey: event.payload.pinned ? existingRow.value.pinOrderKey : null,
             updatedAt: event.payload.updatedAt,
           });
           return;

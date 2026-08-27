@@ -106,7 +106,6 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           worktreePath: null,
           taskOrchestrationEnabled: true,
           taskRelation: null,
-          pinned: true,
           createdAt: now,
           updatedAt: now,
         },
@@ -155,19 +154,15 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         readonly enabled: number;
         readonly relation: string | null;
         readonly parentId: string | null;
-        readonly pinned: number;
       }>`
         SELECT
           task_orchestration_enabled AS enabled,
           task_relation_json AS relation,
-          task_parent_thread_id AS parentId,
-          pinned
+          task_parent_thread_id AS parentId
         FROM projection_threads
         WHERE thread_id = 'thread-1'
       `;
-      assert.deepEqual(taskMetadataRows, [
-        { enabled: 1, relation: null, parentId: null, pinned: 1 },
-      ]);
+      assert.deepEqual(taskMetadataRows, [{ enabled: 1, relation: null, parentId: null }]);
 
       const messageRows = yield* sql<{
         readonly messageId: string;

@@ -56,7 +56,6 @@ import {
   visibleThreadListV2Items,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
-  type ThreadListV2ChangeRequestState,
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
@@ -212,9 +211,6 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
-  const autoSettleOnMerge =
-    !AsyncResult.isSuccess(preferencesResult) ||
-    preferencesResult.value.autoSettleOnMerge !== false;
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const unnestedTaskKeys = useMemo(
     () =>
@@ -500,39 +496,6 @@ export function HomeScreen(props: HomeScreenProps) {
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
-   // PR states stream in per-row. The next partition applies the configured
-  // merge rule and the always-on close rule, matching web.
-  const [changeRequestByKey, setChangeRequestByKey] = useState<
-    ReadonlyMap<string, ThreadListV2ChangeRequestState>
-  >(() => new Map());
-  const handleChangeRequestState = useCallback(
-    (threadKey: string, changeRequest: ThreadListV2ChangeRequestState | null) => {
-      setChangeRequestByKey((current) => {
-        const existing = current.get(threadKey) ?? null;
-        if (
-          (existing?.state ?? null) === (changeRequest?.state ?? null) &&
-          (existing?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null) &&
-          (existing?.linkedPullRequestKey ?? null) === (changeRequest?.linkedPullRequestKey ?? null)
-        ) {
-          return current;
-        }
-        const next = new Map(current);
-        if (changeRequest === null) {
-          next.delete(threadKey);
-        } else {
-          next.set(threadKey, changeRequest);
-        }
-        return next;
-      });
-    },
-    [],
-  );
-   const handleSettleThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      void props.onSettleThread(thread);
-    },
-     [props.onSettleThread],
-   );
   const handleSnoozeThread = useCallback(
     (thread: EnvironmentThreadShell, snoozedUntil: string) => {
       void props.onSnoozeThread(thread, snoozedUntil);
@@ -694,8 +657,6 @@ export function HomeScreen(props: HomeScreenProps) {
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
-       changeRequestByKey,
-       autoSettleOnMerge,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       unnestedThreadKeys: unnestedTaskKeys,
@@ -707,8 +668,6 @@ export function HomeScreen(props: HomeScreenProps) {
       selectedThreadKey: null,
     });
   }, [
-     changeRequestByKey,
-     autoSettleOnMerge,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -943,7 +902,6 @@ export function HomeScreen(props: HomeScreenProps) {
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
-          onChangeRequestState={handleChangeRequestState}
           onSetTaskUnnested={setTaskUnnested}
           onToggleTaskTree={toggleTaskTree}
           onPinThread={handlePinThread}

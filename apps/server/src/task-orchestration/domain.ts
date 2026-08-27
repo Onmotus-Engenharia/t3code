@@ -202,7 +202,7 @@ export const taskSummary = (
   reasoningEffort: reasoningEffort(thread),
   runtimeMode: thread.runtimeMode,
   sessionStatus: thread.session?.status ?? null,
-  pinned: thread.pinned,
+  pinned: thread.pinnedAt !== null,
   contextHealth,
 });
 

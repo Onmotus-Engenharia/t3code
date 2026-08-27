@@ -17,7 +17,10 @@ export const NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET = 56;
 type NativeMailSearchToolbarInput = Omit<
   HeaderBarButtonMailSearchToolbarItem,
   "type" | "useFallbackSearchField"
->;
+> & {
+  /** Present in the patched iOS toolbar; ignored by older native clients. */
+  readonly showsSearchDismissButton?: boolean;
+};
 
 /**
  * Builds the patched react-native-screens Mail-style bottom search toolbar.

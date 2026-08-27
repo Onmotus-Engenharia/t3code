@@ -46,7 +46,6 @@ export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type SetThreadTaskOrchestrationInput = CommandInput<"thread.task-orchestration.set">;
-export type SetThreadPinInput = CommandInput<"thread.pin.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
@@ -273,16 +272,6 @@ export const setThreadTaskOrchestration: (input: SetThreadTaskOrchestrationInput
       commandId: yield* commandId(input),
     });
   });
-
-export const setThreadPin: (input: SetThreadPinInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.setThreadPin",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.pin.set",
-    commandId: yield* commandId(input),
-  });
-});
 
 export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.startThreadTurn",

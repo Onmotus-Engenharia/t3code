@@ -55,7 +55,6 @@ function makeReadModel(taskOrchestrationEnabled: boolean): OrchestrationReadMode
         settledAt: null,
         taskOrchestrationEnabled,
         taskRelation: null,
-        pinned: false,
         deletedAt: null,
         messages: [],
         proposedPlans: [],
@@ -137,7 +136,6 @@ it.layer(NodeServices.layer)("task orchestration decider", (it) => {
       expect(event.payload).toMatchObject({
         taskRelation: taskCreate().taskRelation,
         taskOrchestrationEnabled: true,
-        pinned: false,
       });
     }),
   );

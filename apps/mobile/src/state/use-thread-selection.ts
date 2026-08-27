@@ -64,7 +64,7 @@ function threadDetailToShell(
     snoozedAt: thread.snoozedAt ?? null,
     taskOrchestrationEnabled: thread.taskOrchestrationEnabled,
     taskRelation: thread.taskRelation,
-    pinned: thread.pinned,
+    pinnedAt: thread.pinnedAt ?? null,
     session: thread.session,
     latestUserMessageAt: latestUserMessageAt(thread),
     hasPendingApprovals: false,

@@ -743,36 +743,35 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 composer slot, so composer drafts and editor state survive. */}
             <View style={activeUserInputRequestId !== null ? { display: "none" } : undefined}>
               <ThreadComposer
-              editorRef={composerEditorRef}
-              draftMessage={props.draftMessage}
-              draftAttachments={props.draftAttachments}
-              placeholder="Ask the repo agent, or run a command…"
-              contentMaxWidth={contentMaxWidth}
-              connectionState={props.connectionStateLabel}
-              connectionError={props.connectionError}
-              environmentLabel={props.environmentLabel}
-              threadSyncPhase={threadSyncPhase}
-              selectedThread={props.selectedThread}
-              taskTreeContextWindowUsage={props.taskTreeContextWindowUsage}
-              contextDiffToTurnCount={props.contextDiffToTurnCount}
-              serverConfig={props.serverConfig}
-              queueCount={props.selectedThreadQueueCount}
-              activeThreadBusy={props.activeThreadBusy}
-              environmentId={props.environmentId}
-              projectCwd={props.projectWorkspaceRoot}
-              bottomInset={composerBottomInset}
-              onChangeDraftMessage={props.onChangeDraftMessage}
-              onPickDraftImages={props.onPickDraftImages}
-              onNativePasteImages={props.onNativePasteImages}
-              onRemoveDraftImage={props.onRemoveDraftImage}
-              onStopThread={props.onStopThread}
-              onSendMessage={handleSendMessage}
-              onReconnectEnvironment={props.onReconnectEnvironment}
-              onUpdateModelSelection={props.onUpdateThreadModelSelection}
-              onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
-              onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-              onExpandedChange={setComposerExpanded}
-              onEditorFocusChange={handleOwnedInputFocusChange}
+                editorRef={composerEditorRef}
+                draftMessage={props.draftMessage}
+                draftAttachments={props.draftAttachments}
+                placeholder="Ask the repo agent, or run a command…"
+                contentMaxWidth={contentMaxWidth}
+                connectionState={props.connectionStateLabel}
+                connectionError={props.connectionError}
+                environmentLabel={props.environmentLabel}
+                threadSyncPhase={threadSyncPhase}
+                selectedThread={props.selectedThread}
+                taskTreeContextWindowUsage={props.taskTreeContextWindowUsage}
+                contextDiffToTurnCount={props.contextDiffToTurnCount}
+                serverConfig={props.serverConfig}
+                queueCount={props.selectedThreadQueueCount}
+                environmentId={props.environmentId}
+                projectCwd={props.projectWorkspaceRoot}
+                bottomInset={composerBottomInset}
+                onChangeDraftMessage={props.onChangeDraftMessage}
+                onPickDraftImages={props.onPickDraftImages}
+                onNativePasteImages={props.onNativePasteImages}
+                onRemoveDraftImage={props.onRemoveDraftImage}
+                onStopThread={props.onStopThread}
+                onSendMessage={handleSendMessage}
+                onReconnectEnvironment={props.onReconnectEnvironment}
+                onUpdateModelSelection={props.onUpdateThreadModelSelection}
+                onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
+                onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                onExpandedChange={setComposerExpanded}
+                onEditorFocusChange={handleOwnedInputFocusChange}
               />
             </View>
           </View>

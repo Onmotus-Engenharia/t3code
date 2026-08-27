@@ -51,7 +51,6 @@ function makeReadModel(input: {
         snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? SNOOZED_AT : null),
         taskOrchestrationEnabled: false,
         taskRelation: null,
-        pinned: false,
         deletedAt: null,
         messages: input.messages ?? [],
         proposedPlans: [],

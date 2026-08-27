@@ -228,7 +228,7 @@ function makeThread(
     checkpoints: [],
     taskOrchestrationEnabled: false,
     taskRelation: null,
-    pinned: false,
+    pinnedAt: null,
     session: null,
     ...input,
     settledOverride: input.settledOverride ?? null,

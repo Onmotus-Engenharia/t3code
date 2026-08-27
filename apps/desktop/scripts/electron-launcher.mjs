@@ -27,13 +27,12 @@ const APP_PROTOCOL_SCHEMES = isDevelopment
   : [distribution.protocols.production];
 const LAUNCHER_VERSION = 15;
 const defaultIconPath = NodePath.join(desktopDir, "resources", "icon.icns");
-const developmentMacIconPngPath = NodePath.join(
+const orchestratorMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
-  "dev",
-  "blueprint-macos-1024.png",
+  "orchestrator",
+  "orchestrator-macos-1024.png",
 );
-const productionMacIconPngPath = NodePath.join(repoRoot, "assets", "prod", "black-macos-1024.png");
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 
@@ -173,8 +172,11 @@ function registerMacLauncherBundle(appBundlePath) {
 
 export function resolveMacLauncherIconPaths(runtimeDir, development = isDevelopment) {
   return {
-    sourceIconPath: development ? developmentMacIconPngPath : productionMacIconPngPath,
-    generatedIconPath: NodePath.join(runtimeDir, development ? "icon-dev.icns" : "icon-prod.icns"),
+    sourceIconPath: orchestratorMacIconPngPath,
+    generatedIconPath: NodePath.join(
+      runtimeDir,
+      development ? "icon-orchestrator-dev.icns" : "icon-orchestrator.icns",
+    ),
   };
 }
 

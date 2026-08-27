@@ -23,11 +23,13 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderApprovalDecision as ProviderApprovalDecisionSchema,
+  ProviderApprovalOption as ProviderApprovalOptionSchema,
+} from "./providerApproval.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 import {
   TaskRelation,
-  ThreadPinSetCommand,
-  ThreadPinSetPayload,
   ThreadTaskOrchestrationSetCommand,
   ThreadTaskOrchestrationSetPayload,
 } from "./taskOrchestration.ts";
@@ -146,19 +148,10 @@ export const ProviderRequestKind = Schema.Literals([
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
 export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
-export const ProviderApprovalDecision = Schema.Literals([
-  "accept",
-  "acceptForSession",
-  "acceptAlways",
-  "decline",
-  "cancel",
-]);
-export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
-export const ProviderApprovalOption = Schema.Struct({
-  decision: ProviderApprovalDecision,
-  label: TrimmedNonEmptyString,
-});
-export type ProviderApprovalOption = typeof ProviderApprovalOption.Type;
+export const ProviderApprovalDecision = ProviderApprovalDecisionSchema;
+export type ProviderApprovalDecision = typeof ProviderApprovalDecisionSchema.Type;
+export const ProviderApprovalOption = ProviderApprovalOptionSchema;
+export type ProviderApprovalOption = typeof ProviderApprovalOptionSchema.Type;
 export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
@@ -440,7 +433,6 @@ export const OrchestrationThread = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   taskOrchestrationEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   taskRelation: Schema.NullOr(TaskRelation).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  pinned: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Active pinned threads render in the pinned block. Settled and snoozed
   // threads remain in their respective shelves even when pinned.
   // Optional so payloads from pre-pinning servers still decode.
@@ -510,7 +502,6 @@ export const OrchestrationThreadShell = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   taskOrchestrationEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   taskRelation: Schema.NullOr(TaskRelation).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  pinned: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   latestTokenUsage: Schema.optional(Schema.NullOr(ThreadTokenUsageSnapshot)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -975,7 +966,6 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTaskOrchestrationSetCommand,
-  ThreadPinSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -1005,7 +995,6 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTaskOrchestrationSetCommand,
-  ThreadPinSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -1207,7 +1196,6 @@ export const ThreadCreatedPayload = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   taskOrchestrationEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   taskRelation: Schema.NullOr(TaskRelation).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  pinned: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1274,6 +1262,16 @@ export const ThreadUnpinnedPayload = Schema.Struct({
 export const ThreadPinReorderedPayload = Schema.Struct({
   threadId: ThreadId,
   orderKey: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
+
+/**
+ * Historic fork event payload. This remains decode-only so event streams that
+ * predate canonical pinning can still be replayed into `pinnedAt`.
+ */
+export const LegacyThreadPinSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  pinned: Schema.Boolean,
   updatedAt: IsoDateTime,
 });
 
@@ -1523,7 +1521,7 @@ export const OrchestrationEvent = Schema.Union([
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("thread.pin-set"),
-    payload: ThreadPinSetPayload,
+    payload: LegacyThreadPinSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

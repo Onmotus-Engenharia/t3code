@@ -51,7 +51,7 @@ function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
     settledAt: null,
     taskOrchestrationEnabled: false,
     taskRelation: null,
-    pinned: false,
+    pinnedAt: null,
     session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,

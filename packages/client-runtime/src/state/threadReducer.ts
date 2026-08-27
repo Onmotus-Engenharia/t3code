@@ -96,7 +96,6 @@ export function applyThreadDetailEvent(
           snoozedAt: null,
           taskOrchestrationEnabled: event.payload.taskOrchestrationEnabled,
           taskRelation: event.payload.taskRelation,
-          pinned: event.payload.pinned,
           deletedAt: null,
           messages: [],
           proposedPlans: [],
@@ -263,7 +262,8 @@ export function applyThreadDetailEvent(
         kind: "updated",
         thread: {
           ...thread,
-          pinned: event.payload.pinned,
+          pinnedAt: event.payload.pinned ? event.occurredAt : null,
+          pinOrderKey: event.payload.pinned ? thread.pinOrderKey : null,
           updatedAt: event.payload.updatedAt,
         },
       };

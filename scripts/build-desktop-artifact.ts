@@ -2079,6 +2079,10 @@ export function resolveDesktopProductName(_version: string): string {
   return desktopPackageJson.productName ?? distribution.displayName;
 }
 
+export function resolveWindowsDesktopExecutableName(): string {
+  return `${distribution.executableName}.exe`;
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2201,7 +2205,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Keep blockmap-based differential downloads enabled while changing the
     // installed file topology. The optimization is in the payload shape, not
     // in trading update bandwidth for install speed.
-    buildConfig.nsis = { differentialPackage: true };
     const winConfig: Record<string, unknown> = {
       target: [target],
       executableName: distribution.executableName,
@@ -2216,6 +2219,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     }
     buildConfig.win = winConfig;
     buildConfig.nsis = {
+      differentialPackage: true,
       artifactName: distribution.nsisArtifactName,
       shortcutName: distribution.displayName,
       uninstallDisplayName: distribution.displayName,
@@ -3158,7 +3162,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
-      appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      appExecutableName: resolveWindowsDesktopExecutableName(),
       targetArch: options.arch,
       verbose: options.verbose,
     });

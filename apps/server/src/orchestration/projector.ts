@@ -20,7 +20,7 @@ import {
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadTaskOrchestrationSetPayload,
-  ThreadPinSetPayload,
+  LegacyThreadPinSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
@@ -310,7 +310,6 @@ export function projectEvent(
             snoozedAt: null,
             taskOrchestrationEnabled: payload.taskOrchestrationEnabled,
             taskRelation: payload.taskRelation,
-            pinned: payload.pinned,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -514,11 +513,12 @@ export function projectEvent(
       );
 
     case "thread.pin-set":
-      return decodeForEvent(ThreadPinSetPayload, event.payload, event.type, "payload").pipe(
+      return decodeForEvent(LegacyThreadPinSetPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            pinned: payload.pinned,
+            pinnedAt: payload.pinned ? event.occurredAt : null,
+            ...(payload.pinned ? {} : { pinOrderKey: null }),
             updatedAt: payload.updatedAt,
           }),
         })),

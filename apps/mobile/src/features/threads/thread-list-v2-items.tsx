@@ -23,13 +23,11 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
-  resolveThreadListV2ChangeRequestState,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
   threadListV2LifecycleAction,
-  type ThreadListV2ChangeRequestState,
   type ThreadListV2Status,
   type ThreadSection,
 } from "./threadListV2";
@@ -382,12 +380,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly canMovePinnedDown?: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  /** Reports this row's live PR (state + last activity) for the partition's
-      merge and close rules. Mirrors web's onChangeRequestState. */
-  readonly onChangeRequestState?: (
-    threadKey: string,
-    changeRequest: ThreadListV2ChangeRequestState | null,
-  ) => void;
   readonly projectCwd?: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
@@ -414,20 +406,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
-
   const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
-  const prState = pr?.state ?? null;
-  const prUpdatedAt = pr?.updatedAt ?? null;
-  const threadKey = `${thread.environmentId}:${thread.id}`;
-  useEffect(() => {
-    const changeRequest = resolveThreadListV2ChangeRequestState({
-      linkedPullRequest: thread.linkedPullRequest,
-      state: prState,
-      updatedAt: prUpdatedAt,
-    });
-    if (changeRequest === undefined) return;
-    onChangeRequestState?.(threadKey, changeRequest);
-  }, [onChangeRequestState, prState, prUpdatedAt, thread.linkedPullRequest, threadKey]);
 
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");

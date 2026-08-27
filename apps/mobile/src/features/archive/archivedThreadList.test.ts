@@ -37,7 +37,7 @@ function makeThread(
     archivedAt: "2026-06-02T00:00:00.000Z",
     taskOrchestrationEnabled: false,
     taskRelation: null,
-    pinned: false,
+    pinnedAt: null,
     session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,

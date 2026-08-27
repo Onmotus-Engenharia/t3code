@@ -132,7 +132,7 @@ export const make = Effect.gen(function* () {
       // bootstrap here before whenReady can fire.
       // Older Clerk bridge declarations did not expose this field. Treat an
       // absent value as primary so existing packaged installs retain their
-      // former launch behavior, while v0.0.33 bridges still stop a secondary
+      // former launch behavior, while older bridges still stop a secondary
       // instance before bootstrap.
       const isPrimaryInstance =
         (bridge as typeof bridge & { readonly isPrimaryInstance?: boolean }).isPrimaryInstance !==

@@ -16,7 +16,6 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
-  resolveThreadListV2ChangeRequestState,
   resolveThreadListV2Enabled,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -50,7 +49,7 @@ function makeThread(
     settledAt: null,
     taskOrchestrationEnabled: false,
     taskRelation: null,
-    pinned: false,
+    pinnedAt: null,
     session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
@@ -67,42 +66,6 @@ const linkedPullRequest = {
   number: 42,
   url: "https://github.com/pingdotgg/t3code/pull/42",
 };
-
-describe("resolveThreadListV2ChangeRequestState", () => {
-  it("preserves the previous state while a linked pull request reloads", () => {
-    expect(
-      resolveThreadListV2ChangeRequestState({
-        linkedPullRequest,
-        state: null,
-        updatedAt: null,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("clears the previous state after a pull request is unlinked", () => {
-    expect(
-      resolveThreadListV2ChangeRequestState({
-        linkedPullRequest: null,
-        state: null,
-        updatedAt: null,
-      }),
-    ).toBeNull();
-  });
-
-  it("reports a loaded linked pull request", () => {
-    expect(
-      resolveThreadListV2ChangeRequestState({
-        linkedPullRequest,
-        state: "merged",
-        updatedAt: "2026-06-02T00:00:00.000Z",
-      }),
-    ).toEqual({
-      state: "merged",
-      updatedAt: "2026-06-02T00:00:00.000Z",
-      linkedPullRequestKey: '["project-1","pingdotgg/t3code",42]',
-    });
-  });
-});
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
   it("accepts a displayed evening preset while its wake time is still future", () => {
@@ -313,33 +276,7 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
-  it("ignores the previous pull request state after a different pull request is linked", () => {
-    const thread = makeThread({
-      id: ThreadId.make("linked"),
-      title: "Linked pull request",
-      linkedPullRequest,
-    });
-    const layout = buildThreadListV2Items({
-      threads: [thread],
-      environmentId: null,
-      searchQuery: "",
-      changeRequestByKey: new Map([
-        [
-          `${environmentId}:${thread.id}`,
-          {
-            state: "merged" as const,
-            linkedPullRequestKey: '["project-1","pingdotgg/t3code",41]',
-          },
-        ],
-      ]),
-      now: NOW,
-    });
-
-    expect(layout.settledCount).toBe(0);
-    expect(layout.items[0]?.variant).toBe("card");
-  });
-
-  it("settles a thread only when the cached pull request identity matches", () => {
+  it("does not settle a linked merged pull request without configured inactivity", () => {
     const thread = makeThread({
       id: ThreadId.make("linked-merged"),
       title: "Linked merged pull request",
@@ -349,37 +286,11 @@ describe("buildThreadListV2Items", () => {
       threads: [thread],
       environmentId: null,
       searchQuery: "",
-      changeRequestByKey: new Map([
-        [
-          `${environmentId}:${thread.id}`,
-          {
-            state: "merged" as const,
-            linkedPullRequestKey: '["project-1","pingdotgg/t3code",42]',
-          },
-        ],
-      ]),
       now: NOW,
     });
 
-    expect(layout.settledCount).toBe(1);
-    expect(layout.items[0]?.variant).toBe("slim");
-  });
-
-  it("keeps a merged thread active when auto-settle on merge is off", () => {
-    const merged = makeThread({ id: ThreadId.make("merged"), title: "Merged" });
-    const layout = buildThreadListV2Items({
-      threads: [merged],
-      environmentId: null,
-      searchQuery: "",
-      changeRequestByKey: new Map([
-        [`${environmentId}:${merged.id}`, { state: "merged" as const }],
-      ]),
-      autoSettleOnMerge: false,
-      now: NOW,
-    });
-
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["merged"]);
     expect(layout.settledCount).toBe(0);
+    expect(layout.items[0]?.variant).toBe("card");
   });
 
   it("hides snoozed threads and counts them — visibility parity with web", () => {
@@ -411,7 +322,7 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(1);
   });
 
-  it("places settled pinned threads in the settled shelf", () => {
+  it("keeps pinned threads in the active block", () => {
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "Active" }),
@@ -428,12 +339,12 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "pinned-settled"]);
-    expect(layout.items.map((item) => item.pinned)).toEqual([false, false]);
-    expect(layout.settledCount).toBe(1);
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["pinned-settled", "active"]);
+    expect(layout.items.map((item) => item.pinned)).toEqual([true, false]);
+    expect(layout.settledCount).toBe(0);
   });
 
-  it("moves pinned threads to the settled shelf when their pull request merges", () => {
+  it("does not settle pinned threads when their linked pull request merges", () => {
     const merged = makeThread({
       id: ThreadId.make("pinned-merged"),
       title: "Pinned merged pull request",
@@ -443,14 +354,13 @@ describe("buildThreadListV2Items", () => {
       threads: [makeThread({ id: ThreadId.make("active"), title: "Active" }), merged],
       environmentId: null,
       searchQuery: "",
-      changeRequestByKey: new Map([[`${environmentId}:${merged.id}`, { state: "merged" }]]),
       now: NOW,
     });
 
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "pinned-merged"]);
-    expect(layout.items.map((item) => item.variant)).toEqual(["card", "slim"]);
-    expect(layout.items[1]?.thread.pinnedAt).toBe("2026-06-01T12:00:00.000Z");
-    expect(layout.settledCount).toBe(1);
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["pinned-merged", "active"]);
+    expect(layout.items.map((item) => item.variant)).toEqual(["card", "card"]);
+    expect(layout.items[0]?.thread.pinnedAt).toBe("2026-06-01T12:00:00.000Z");
+    expect(layout.settledCount).toBe(0);
   });
 
   it("moves inactive pinned threads to the settled shelf", () => {
@@ -477,13 +387,13 @@ describe("buildThreadListV2Items", () => {
 
     expect(layout.items[0]).toMatchObject({
       thread: { id: "pinned-inactive" },
-      variant: "slim",
-      pinned: false,
+      variant: "card",
+      pinned: true,
     });
-    expect(layout.settledCount).toBe(1);
+    expect(layout.settledCount).toBe(0);
   });
 
-  it("keeps pinned merged threads pinned when auto-settle on merge is off", () => {
+  it("keeps canonical pinnedAt state in the pinned block", () => {
     const merged = makeThread({
       id: ThreadId.make("pinned-merged"),
       title: "Pinned merged pull request",
@@ -493,8 +403,6 @@ describe("buildThreadListV2Items", () => {
       threads: [merged],
       environmentId: null,
       searchQuery: "",
-      changeRequestByKey: new Map([[`${environmentId}:${merged.id}`, { state: "merged" }]]),
-      autoSettleOnMerge: false,
       now: NOW,
     });
 

@@ -390,10 +390,9 @@ export const makeT3Tasks = Effect.gen(function* () {
         return fail("invalid_arguments", "'pinned' must be a boolean.");
       }
       yield* engine.dispatch({
-        type: "thread.pin.set",
+        type: args.pinned ? "thread.pin" : "thread.unpin",
         commandId: yield* commandId,
         threadId: target.id,
-        pinned: args.pinned,
       });
       return { threadId: target.id, pinned: args.pinned };
     }

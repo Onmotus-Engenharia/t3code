@@ -31,6 +31,25 @@ const skills = [
 ] as ReadonlyArray<ServerProviderSkill>;
 
 describe("composer command menu", () => {
+  it("uses provider skill visibility and lets a skill alias suppress its duplicate slash command", () => {
+    const items = buildComposerCommandItems({
+      trigger: {
+        kind: "slash-command",
+        query: "skill:rev",
+        rangeStart: 0,
+        rangeEnd: 10,
+      },
+      skills,
+      slashCommands: [
+        { name: "review", description: "Duplicate provider alias" },
+        { name: "compact", description: "Compact the conversation" },
+      ],
+      pathEntries: [],
+    });
+
+    expect(items).toEqual([expect.objectContaining({ type: "skill", label: "skill:review" })]);
+  });
+
   it("offers enabled selected-provider skills and replaces the trigger at the cursor", () => {
     const items = buildComposerCommandItems({
       trigger: skillTrigger,

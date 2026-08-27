@@ -1,4 +1,9 @@
 import type { ComposerPathSearchEntry } from "@t3tools/client-runtime/state/threads";
+import {
+  formatProviderSkillDisplayName,
+  getProviderSkillsForSlashMenu,
+  getProviderSlashCommandsForSlashMenu,
+} from "@t3tools/client-runtime/providerSkills";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import {
   replaceTextRange,
@@ -10,6 +15,8 @@ import {
   normalizeSearchQuery,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
+
+import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
 export type ComposerCommandItem =
   | {
@@ -95,7 +102,11 @@ export function buildComposerCommandItems(input: {
     }
     const query = trigger.query.toLowerCase();
     const builtIn = builtInSlashCommands.filter((item) => item.command.includes(query));
-    const providerCommands = (input.slashCommands ?? [])
+    const visibleSkills = getProviderSkillsForSlashMenu(input.skills, true);
+    const providerCommands = getProviderSlashCommandsForSlashMenu(
+      input.slashCommands ?? [],
+      visibleSkills,
+    )
       .filter((command) => command.name.toLowerCase().includes(query))
       .map((command) => ({
         id: `pcmd:${command.name}`,
@@ -105,11 +116,17 @@ export function buildComposerCommandItems(input: {
         description: command.description ?? "",
       }));
 
-    return [...builtIn, ...providerCommands];
+    const skillItems = visibleSkills
+      .filter((skill) => matchesSlashSkillQuery(skill, query))
+      .map((skill) => ({
+        ...toSkillCommandItem(skill),
+        label: `skill:${skill.name}`,
+      }));
+    return [...builtIn, ...providerCommands, ...skillItems];
   }
 
   if (trigger.kind === "skill") {
-    const enabledSkills = input.skills.filter((skill) => skill.enabled);
+    const enabledSkills = getProviderSkillsForSlashMenu(input.skills, true);
     const normalizedQuery = normalizeSearchQuery(trigger.query, {
       trimLeadingPattern: /^\$+/,
     });
@@ -124,7 +141,7 @@ export function buildComposerCommandItems(input: {
       tieBreaker: string;
     }> = [];
     for (const skill of enabledSkills) {
-      const displayLabel = (skill.displayName ?? skill.name).toLowerCase();
+      const displayLabel = formatProviderSkillDisplayName(skill).toLowerCase();
       const scores = [
         scoreQueryMatch({
           value: skill.name.toLowerCase(),
@@ -230,7 +247,7 @@ function toSkillCommandItem(skill: ServerProviderSkill): ComposerCommandItem {
     id: `skill:${skill.name}`,
     type: "skill",
     skill,
-    label: skill.displayName ?? skill.name,
+    label: formatProviderSkillDisplayName(skill),
     description: skill.shortDescription ?? skill.description ?? "",
   };
 }

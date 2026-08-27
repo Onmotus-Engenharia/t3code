@@ -12,11 +12,6 @@ import {
   replaceTextRange,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
-import {
-  insertRankedSearchResult,
-  normalizeSearchQuery,
-  scoreQueryMatch,
-} from "@t3tools/shared/searchRanking";
 import { selectLatestCodexRateLimits } from "@t3tools/shared/providerRateLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
@@ -76,10 +71,10 @@ import { serverEnvironment } from "../../state/server";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import {
   applyComposerCommandItem,
+  buildComposerCommandItems,
   shouldShowComposerCommandPopover,
   type ComposerCommandItem,
 } from "./composer-command-menu";
-import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 import {
   buildContextInfoActions,
   formatContextUsage,
@@ -405,6 +400,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
+  const currentInteractionMode = props.selectedThread.interactionMode;
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
@@ -460,160 +456,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     query: isPathSearchActive ? composerTrigger.query : null,
   });
 
-  const composerMenuItems: ComposerCommandItem[] = useMemo(() => {
-    if (!composerTrigger) return [];
-
-    if (composerTrigger.kind === "slash-command") {
-      const q = composerTrigger.query.toLowerCase();
-      const allBuiltIn = [
-        {
-          id: "cmd:model",
-          type: "slash-command" as const,
-          command: "model",
-          label: "/model",
-          description: "Switch model",
-        },
-        {
-          id: "cmd:plan",
-          type: "slash-command" as const,
-          command: "plan",
-          label: "/plan",
-          description: "Switch to plan mode",
-        },
-        {
-          id: "cmd:default",
-          type: "slash-command" as const,
-          command: "default",
-          label: "/default",
-          description: "Switch to default mode",
-        },
-      ];
-      const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
-
-      const providerCommands: ComposerCommandItem[] = [];
-      for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
-        if (!cmd.name.toLowerCase().includes(q)) continue;
-        providerCommands.push({
-          id: `pcmd:${cmd.name}`,
-          type: "provider-slash-command" as const,
-          command: cmd,
-          label: `/${cmd.name}`,
-          description: cmd.description ?? "",
-        });
-      }
-
-      const skillItems = (selectedProviderStatus?.skills ?? [])
-        .filter((skill) => matchesSlashSkillQuery(skill, q))
-        .map((skill) => ({
-          id: `skill:${skill.name}`,
-          type: "skill" as const,
-          skill,
-          label: `skill:${skill.name}`,
-          description: skill.shortDescription ?? skill.description ?? "",
-        }));
-
-      return [...builtIn, ...providerCommands, ...skillItems];
-    }
-
-    if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
-      const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
-        trimLeadingPattern: /^\$+/,
-      });
-
-      if (!normalizedQuery) {
-        return enabledSkills.slice(0, 20).map((skill) => ({
-          id: `skill:${skill.name}`,
-          type: "skill" as const,
-          skill,
-          label: skill.displayName ?? skill.name,
-          description: skill.shortDescription ?? skill.description ?? "",
-        }));
-      }
-
-      const ranked: Array<{
-        item: (typeof enabledSkills)[number];
-        score: number;
-        tieBreaker: string;
-      }> = [];
-      for (const skill of enabledSkills) {
-        const displayLabel = (skill.displayName ?? skill.name).toLowerCase();
-        const scores = [
-          scoreQueryMatch({
-            value: skill.name.toLowerCase(),
-            query: normalizedQuery,
-            exactBase: 0,
-            prefixBase: 2,
-            boundaryBase: 4,
-            includesBase: 6,
-            fuzzyBase: 100,
-            boundaryMarkers: ["-", "_", "/"],
-          }),
-          scoreQueryMatch({
-            value: displayLabel,
-            query: normalizedQuery,
-            exactBase: 1,
-            prefixBase: 3,
-            boundaryBase: 5,
-            includesBase: 7,
-            fuzzyBase: 110,
-          }),
-          scoreQueryMatch({
-            value: skill.shortDescription?.toLowerCase() ?? "",
-            query: normalizedQuery,
-            exactBase: 20,
-            prefixBase: 22,
-            boundaryBase: 24,
-            includesBase: 26,
-          }),
-          scoreQueryMatch({
-            value: skill.description?.toLowerCase() ?? "",
-            query: normalizedQuery,
-            exactBase: 30,
-            prefixBase: 32,
-            boundaryBase: 34,
-            includesBase: 36,
-          }),
-        ].filter((s): s is number => s !== null);
-
-        if (scores.length > 0) {
-          insertRankedSearchResult(
-            ranked,
-            {
-              item: skill,
-              score: Math.min(...scores),
-              tieBreaker: `${displayLabel}\u0000${skill.name}`,
-            },
-            20,
-          );
-        }
-      }
-
-      return ranked.map(({ item: skill }) => ({
-        id: `skill:${skill.name}`,
-        type: "skill" as const,
-        skill,
-        label: skill.displayName ?? skill.name,
-        description: skill.shortDescription ?? skill.description ?? "",
-      }));
-    }
-
-    if (composerTrigger.kind === "path") {
-      return pathSearch.entries.map((entry) => {
-        const parts = entry.path.split("/");
-        return {
-          id: `path:${entry.path}`,
-          type: "path" as const,
-          path: entry.path,
-          kind: entry.kind,
-          label: parts[parts.length - 1] ?? entry.path,
-          description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
-        };
-      });
-    }
-
-    return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  const composerMenuItems: ReadonlyArray<ComposerCommandItem> = useMemo(
+    () =>
+      buildComposerCommandItems({
+        trigger: composerTrigger,
+        skills: selectedProviderStatus?.skills ?? [],
+        slashCommands: selectedProviderStatus?.slashCommands ?? [],
+        pathEntries: pathSearch.entries,
+      }),
+    [composerTrigger, pathSearch.entries, selectedProviderStatus],
+  );
   const showComposerMenu = shouldShowComposerCommandPopover(composerTrigger);
 
   // ── Handle command selection ──────────────────────────────
@@ -1107,8 +959,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 </ControlPillMenu>
                 {currentContextUsage ? (
                   <ControlPillMenu actions={contextUsageActions} onPressAction={() => undefined}>
-                  <ComposerInlineControl
-                    accessibilityLabel={`Context window: ${formatContextUsage(currentContextUsage)}. ${formatContextWindowTokens(currentContextUsage.totalProcessedTokens ?? currentContextUsage.usedTokens)} total processed${props.taskTreeContextWindowUsage ? `. All ${props.taskTreeContextWindowUsage.taskCount} tasks: ${formatContextUsage(props.taskTreeContextWindowUsage)}, ${formatContextWindowTokens(props.taskTreeContextWindowUsage.totalProcessedTokens)} total processed` : ""}`}
+                    <ComposerInlineControl
+                      accessibilityLabel={`Context window: ${formatContextUsage(currentContextUsage)}. ${formatContextWindowTokens(currentContextUsage.totalProcessedTokens ?? currentContextUsage.usedTokens)} total processed${props.taskTreeContextWindowUsage ? `. All ${props.taskTreeContextWindowUsage.taskCount} tasks: ${formatContextUsage(props.taskTreeContextWindowUsage)}, ${formatContextWindowTokens(props.taskTreeContextWindowUsage.totalProcessedTokens)} total processed` : ""}`}
                       icon="gauge.with.dots.needle.33percent"
                       label={formatContextUsage(currentContextUsage)}
                     />

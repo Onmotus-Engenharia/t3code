@@ -51,7 +51,6 @@ function makeReadModel(
         settledAt: settledOverride === "settled" ? SETTLED_AT : null,
         taskOrchestrationEnabled: false,
         taskRelation: null,
-        pinned: false,
         snoozedUntil: lifecycle.snoozedUntil ?? null,
         snoozedAt: lifecycle.snoozedAt ?? (lifecycle.snoozedUntil != null ? SETTLED_AT : null),
         pinnedAt: lifecycle.pinnedAt ?? null,

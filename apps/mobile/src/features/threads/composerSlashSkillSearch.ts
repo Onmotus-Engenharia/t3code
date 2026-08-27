@@ -1,7 +1,8 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { getProviderSkillsForSlashMenu } from "@t3tools/client-runtime/providerSkills";
 
 export function matchesSlashSkillQuery(skill: ServerProviderSkill, query: string): boolean {
-  if (!skill.enabled) return false;
+  if (getProviderSkillsForSlashMenu([skill], true).length === 0) return false;
   const normalizedQuery = query.toLowerCase();
   const skillQuery =
     normalizedQuery === "skill"

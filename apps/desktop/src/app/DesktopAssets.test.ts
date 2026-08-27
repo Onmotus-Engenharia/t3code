@@ -23,7 +23,7 @@ const environmentLayer = DesktopEnvironment.layer({
 }).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))));
 
 describe("DesktopAssets", () => {
-  it.effect("uses canonical source-tree icons for unpackaged development", () =>
+  it.effect("uses Orchestrator source-tree icons for unpackaged development", () =>
     Effect.gen(function* () {
       const developmentEnvironmentLayer = DesktopEnvironment.layer({
         dirname: "/repo/apps/desktop/dist-electron",
@@ -44,7 +44,7 @@ describe("DesktopAssets", () => {
         ),
       );
       const fileSystemLayer = FileSystem.layerNoop({
-        exists: (path) => Effect.succeed(String(path).includes("/assets/dev/")),
+        exists: (path) => Effect.succeed(/[\\/]assets[\\/]orchestrator[\\/]/.test(String(path))),
       });
       const assets = yield* DesktopAssets.DesktopAssets.pipe(
         Effect.provide(
@@ -56,12 +56,17 @@ describe("DesktopAssets", () => {
 
       const icons = yield* assets.iconPaths;
 
-      assert.match(Option.getOrThrow(icons.ico), /assets\/dev\/blueprint-windows\.ico$/);
-      assert.match(Option.getOrThrow(icons.png), /assets\/dev\/blueprint-universal-1024\.png$/);
+      assert.match(
+        Option.getOrThrow(icons.ico),
+        /assets[\\/]orchestrator[\\/]orchestrator-windows\.ico$/,
+      );
+      assert.match(
+        Option.getOrThrow(icons.png),
+        /assets[\\/]orchestrator[\\/]orchestrator-universal-1024\.png$/,
+      );
       assert.isTrue(Option.isNone(icons.icns));
     }),
   );
-
   it.effect("preserves the failed asset candidate and filesystem cause", () =>
     Effect.gen(function* () {
       const fileName = "custom.bin";

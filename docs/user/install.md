@@ -1,6 +1,6 @@
-# Install T3 Code
+# Install T3 Code Orchestrator
 
-T3 Code is a web and desktop GUI for running coding agents on your machine.
+T3 Code Orchestrator is a web and desktop GUI for running coding agents on your machine.
 
 ## Requirements
 
@@ -19,35 +19,13 @@ This starts the T3 Code server on your machine and opens the local web app. Use
 
 ## Desktop App
 
-Download the latest release from
-[GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
-registry.
+Install a T3 Code Orchestrator artifact from the distribution channel that supplied this build:
+an NSIS installer on Windows, a DMG on macOS, or an AppImage on Linux. Its application identity,
+state, protocol handlers, and updater are intentionally separate from upstream T3 Code.
 
-Windows:
-
-```bash
-winget install T3Tools.T3Code
-```
-
-macOS:
-
-```bash
-brew install --cask t3-code
-```
-
-Arch Linux:
-
-Stable:
-
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
+Do not substitute an upstream T3 Code package for an Orchestrator desktop build. Until this
+distribution has a verified update feed, install later Orchestrator releases manually from the same
+distribution channel.
 
 ## Providers
 

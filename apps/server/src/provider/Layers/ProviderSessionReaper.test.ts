@@ -105,7 +105,6 @@ function makeReadModel(
       settledAt: null,
       taskOrchestrationEnabled: false,
       taskRelation: null,
-      pinned: false,
       latestUserMessageAt: null,
       hasPendingApprovals: false,
       hasPendingUserInput: false,

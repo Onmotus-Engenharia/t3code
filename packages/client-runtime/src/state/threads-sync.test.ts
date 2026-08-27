@@ -73,7 +73,6 @@ const BASE_THREAD: OrchestrationThread = {
   settledAt: null,
   taskOrchestrationEnabled: false,
   taskRelation: null,
-  pinned: false,
   deletedAt: null,
   messages: [],
   proposedPlans: [],

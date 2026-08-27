@@ -86,7 +86,6 @@ import {
   visibleThreadListV2Items,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
-  type ThreadListV2ChangeRequestState,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -176,7 +175,7 @@ function ThreadNavigationSidebarPane(
     regenerateThreadTitle,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
-   const preferences = useAtomValue(mobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const unnestedTaskKeys = useMemo(
     () =>
@@ -187,8 +186,6 @@ function ThreadNavigationSidebarPane(
       ),
     [preferences],
   );
-  const autoSettleOnMerge =
-    !AsyncResult.isSuccess(preferences) || preferences.value.autoSettleOnMerge !== false;
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -386,33 +383,6 @@ function ThreadNavigationSidebarPane(
 
   // Thread List v2 (beta) support — same model as the compact Home list
   // (HomeScreen.tsx): flat creation-order card block + settled recency tail.
-   // PR states stream in per-row. The next partition applies the configured
-  // merge rule and the always-on close rule.
-  const [changeRequestByKey, setChangeRequestByKey] = useState<
-    ReadonlyMap<string, ThreadListV2ChangeRequestState>
-  >(() => new Map());
-   const handleChangeRequestState = useCallback(
-    (threadKey: string, changeRequest: ThreadListV2ChangeRequestState | null) => {
-      setChangeRequestByKey((current) => {
-        const existing = current.get(threadKey) ?? null;
-        if (
-          (existing?.state ?? null) === (changeRequest?.state ?? null) &&
-          (existing?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null) &&
-          (existing?.linkedPullRequestKey ?? null) === (changeRequest?.linkedPullRequestKey ?? null)
-        ) {
-          return current;
-        }
-        const next = new Map(current);
-        if (changeRequest === null) {
-          next.delete(threadKey);
-        } else {
-          next.set(threadKey, changeRequest);
-        }
-        return next;
-      });
-    },
-     [],
-   );
   // The settled tail renders in pages; expansion resets when the filter
   // context changes so environment/search flips never inherit a deep page.
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -533,8 +503,6 @@ function ThreadNavigationSidebarPane(
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
-       changeRequestByKey,
-       autoSettleOnMerge,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       unnestedThreadKeys: unnestedTaskKeys,
@@ -546,8 +514,6 @@ function ThreadNavigationSidebarPane(
       selectedThreadKey: props.selectedThreadKey ?? null,
     });
   }, [
-     changeRequestByKey,
-     autoSettleOnMerge,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -1022,7 +988,6 @@ function ThreadNavigationSidebarPane(
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
-              onChangeRequestState={handleChangeRequestState}
               onPinThread={pinThread}
               onUnpinThread={unpinThread}
               onMovePinnedThread={movePinnedThread}

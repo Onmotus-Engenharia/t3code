@@ -777,17 +777,21 @@ describe("resolveSidebarThreadStatus", () => {
 });
 
 describe("sortThreadsForSidebarV2", () => {
-  const sortable = (input: { id: string; createdAt: string; pinned?: boolean }) => ({
+  const sortable = (input: { id: string; createdAt: string; pinnedAt?: string | null }) => ({
     id: input.id,
     createdAt: input.createdAt,
-    pinned: input.pinned ?? false,
+    pinnedAt: input.pinnedAt ?? null,
   });
 
   it("keeps pinned threads before newer unpinned threads", () => {
     expect(
       sortThreadsForSidebarV2([
         sortable({ id: "new", createdAt: "2026-03-09T12:00:00.000Z" }),
-        sortable({ id: "pinned", createdAt: "2026-03-09T08:00:00.000Z", pinned: true }),
+        sortable({
+          id: "pinned",
+          createdAt: "2026-03-09T08:00:00.000Z",
+          pinnedAt: "2026-03-09T08:00:01.000Z",
+        }),
       ]).map((thread) => thread.id),
     ).toEqual(["pinned", "new"]);
   });
@@ -814,10 +818,10 @@ describe("searchSidebarThreadsByTitle", () => {
 });
 
 describe("sortThreadsForSidebar", () => {
-  const sortable = (input: { id: string; createdAt: string; pinned?: boolean }) => ({
+  const sortable = (input: { id: string; createdAt: string; pinnedAt?: string | null }) => ({
     id: input.id,
     createdAt: input.createdAt,
-    pinned: input.pinned ?? false,
+    pinnedAt: input.pinnedAt ?? null,
   });
 
   it("orders by creation time, newest first, ignoring activity", () => {
@@ -842,7 +846,11 @@ describe("sortThreadsForSidebar", () => {
   it("keeps pinned threads before newer unpinned threads", () => {
     const sorted = sortThreadsForSidebarV2([
       sortable({ id: "new", createdAt: "2026-03-09T12:00:00.000Z" }),
-      sortable({ id: "pinned", createdAt: "2026-03-09T08:00:00.000Z", pinned: true }),
+      sortable({
+        id: "pinned",
+        createdAt: "2026-03-09T08:00:00.000Z",
+        pinnedAt: "2026-03-09T08:00:01.000Z",
+      }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["pinned", "new"]);
@@ -1208,14 +1216,14 @@ describe("sortPinnedThreadsForSidebar", () => {
 describe("sortSettledThreadsForSidebar", () => {
   const settled = (input: {
     id: string;
-    pinned?: boolean;
+    pinnedAt?: string | null;
     settledAt?: string | null;
     latestUserMessageAt?: string | null;
     latestTurn?: OrchestrationLatestTurn | null;
     updatedAt?: string;
   }) => ({
     id: input.id,
-    pinned: input.pinned ?? false,
+    pinnedAt: input.pinnedAt ?? null,
     settledAt: input.settledAt ?? null,
     latestUserMessageAt: input.latestUserMessageAt ?? null,
     latestTurn: input.latestTurn ?? null,
@@ -1277,7 +1285,11 @@ describe("sortSettledThreadsForSidebar", () => {
   it("keeps pinned settled threads before newer unpinned history", () => {
     const sorted = sortSettledThreadsForSidebarV2([
       settled({ id: "new", settledAt: "2026-03-09T12:00:00.000Z" }),
-      settled({ id: "pinned", settledAt: "2026-03-09T08:00:00.000Z", pinned: true }),
+      settled({
+        id: "pinned",
+        settledAt: "2026-03-09T08:00:00.000Z",
+        pinnedAt: "2026-03-09T08:00:01.000Z",
+      }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["pinned", "new"]);
@@ -1619,7 +1631,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     settledAt: null,
     taskOrchestrationEnabled: false,
     taskRelation: null,
-    pinned: false,
+    pinnedAt: null,
     deletedAt: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
     latestTurn: null,

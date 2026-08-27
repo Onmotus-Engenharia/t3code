@@ -6,14 +6,11 @@ import {
   resolveSnoozePresets,
   snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type {
-  ChangeRequestSettleSource,
-  SnoozePreset,
-} from "@t3tools/client-runtime/state/thread-settled";
+import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
-import type { EnvironmentId, ProjectId, ThreadLinkedPullRequest } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
@@ -29,35 +26,6 @@ export { snoozeWakeLabel };
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
-
-export interface ThreadListV2ChangeRequestState extends ChangeRequestSettleSource {
-  readonly linkedPullRequestKey?: string | null;
-}
-
-function linkedPullRequestKey(
-  linkedPullRequest: ThreadLinkedPullRequest | null | undefined,
-): string | null {
-  if (linkedPullRequest == null) return null;
-  return JSON.stringify([
-    linkedPullRequest.projectId,
-    linkedPullRequest.repository.toLowerCase(),
-    linkedPullRequest.number,
-  ]);
-}
-
-/** Keep the previous linked PR state while its detail query reloads. */
-export function resolveThreadListV2ChangeRequestState(input: {
-  readonly linkedPullRequest: ThreadLinkedPullRequest | null | undefined;
-  readonly state: ChangeRequestSettleSource["state"] | null;
-  readonly updatedAt: string | null;
-}): ThreadListV2ChangeRequestState | null | undefined {
-  if (input.state === null) return input.linkedPullRequest == null ? null : undefined;
-  return {
-    state: input.state,
-    updatedAt: input.updatedAt,
-    linkedPullRequestKey: linkedPullRequestKey(input.linkedPullRequest),
-  };
-}
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -208,13 +176,8 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
   );
 }
 
-/** During the v0.0.33 transition, persisted shells can carry the original
- * boolean pin state or the newer timestamp. Treat either as pinned so an
- * upgraded client neither hides a legacy pin nor auto-settles it. */
-export function isThreadListV2Pinned(
-  thread: Pick<EnvironmentThreadShell, "pinned" | "pinnedAt">,
-): boolean {
-  return thread.pinned === true || thread.pinnedAt != null;
+export function isThreadListV2Pinned(thread: Pick<EnvironmentThreadShell, "pinnedAt">): boolean {
+  return thread.pinnedAt != null;
 }
 
 export interface ThreadListV2Item {
@@ -421,7 +384,7 @@ export function buildThreadListV2ListItems(input: {
 /**
  * Partitions visible threads into the active card block (creation order) and
  * the settled recency tail, matching the web v2 list. Mobile stores these
- * auto-settle preferences per device.
+ * configured inactivity settlement.
  */
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -432,8 +395,6 @@ export function buildThreadListV2Items(input: {
   }> | null;
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
-   /** Per-row PR reported up by visible rows ("env:threadId" keys). */
-   readonly changeRequestByKey?: ReadonlyMap<string, ThreadListV2ChangeRequestState>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
       un-settle nor pin them. Absent = no gating (tests). */
@@ -444,7 +405,6 @@ export function buildThreadListV2Items(input: {
   /** Device-local visual override. Does not change orchestration ownership. */
   readonly unnestedThreadKeys?: ReadonlySet<string>;
   readonly autoSettleAfterDays?: number;
-  readonly autoSettleOnMerge?: boolean;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
@@ -465,7 +425,6 @@ export function buildThreadListV2Items(input: {
   const now = input.now ?? new Date().toISOString();
   const snoozeNow = input.snoozeNow ?? now;
   const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
-  const autoSettleOnMerge = input.autoSettleOnMerge ?? true;
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
@@ -506,14 +465,6 @@ export function buildThreadListV2Items(input: {
     // pin — a snoozed thread leaves the list until it wakes (or raises its
     // hand). The pin (and its pinOrderKey) survives underneath, so a woken
     // thread reappears at its exact spot in the pinned block.
-    const cachedChangeRequest =
-      input.changeRequestByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
-    const changeRequest =
-      cachedChangeRequest !== null &&
-      (cachedChangeRequest.linkedPullRequestKey ?? null) ===
-        linkedPullRequestKey(thread.linkedPullRequest)
-        ? cachedChangeRequest
-        : null;
     // Snooze outranks settlement and pinning until the thread wakes.
     if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
       sections.snoozed.push(thread);
@@ -528,15 +479,13 @@ export function buildThreadListV2Items(input: {
     }
     if (
       supportsSettlement &&
-    !isThreadListV2Pinned(thread) &&
-    effectiveSettled(thread, {
-      now,
-      autoSettleAfterDays,
-      autoSettleOnMerge,
-      changeRequest,
-    })
-  ) {
-    sections.settled.push(thread);
+      !isThreadListV2Pinned(thread) &&
+      effectiveSettled(thread, {
+        now,
+        autoSettleAfterDays,
+      })
+    ) {
+      sections.settled.push(thread);
     } else {
       sections.active.push(thread);
     }

@@ -380,7 +380,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           worktreePath: command.worktreePath,
           taskOrchestrationEnabled: true,
           taskRelation: null,
-          pinned: false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -467,7 +466,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             command.taskRelation.depth,
           ),
           taskRelation: command.taskRelation,
-          pinned: false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -1037,29 +1035,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           enabled: command.enabled,
           updatedAt:
             thread.taskOrchestrationEnabled === command.enabled ? thread.updatedAt : occurredAt,
-        },
-      };
-    }
-
-    case "thread.pin.set": {
-      const thread = yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
-      const occurredAt = yield* nowIso;
-      return {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.pin-set",
-        payload: {
-          threadId: command.threadId,
-          pinned: command.pinned,
-          updatedAt: thread.pinned === command.pinned ? thread.updatedAt : occurredAt,
         },
       };
     }

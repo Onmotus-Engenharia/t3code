@@ -82,7 +82,11 @@ function buildScript() {
 }
 
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
-const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
+const peerPath = NodePath.join(
+  import.meta.dirname,
+  "../testFixtures",
+  process.platform === "win32" ? "codexCollabMockPeer.cmd" : "codexCollabMockPeer.sh",
+);
 
 describe("CodexSessionRuntime collab integration", () => {
   it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
@@ -418,6 +422,7 @@ describe("CodexSessionRuntime collab integration", () => {
           binaryPath: peerPath,
           cwd: "/tmp",
           runtimeMode: "auto",
+          taskOrchestrationEnabled: false,
           environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
         });
         const approvalRequested = yield* Deferred.make<ProviderEvent>();

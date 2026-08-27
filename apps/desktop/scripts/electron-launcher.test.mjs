@@ -80,13 +80,16 @@ describe("electron development launcher", () => {
     assert.notInclude(script, "node_modules/electron");
   });
 
-  it("derives launcher icons from canonical development and production assets", () => {
+  it("derives launcher icons from the Orchestrator asset for development and production", () => {
     const development = resolveMacLauncherIconPaths("/runtime", true);
     const production = resolveMacLauncherIconPaths("/runtime", false);
 
-    assert.match(development.sourceIconPath, /assets\/dev\/blueprint-macos-1024\.png$/);
-    assert.equal(development.generatedIconPath, "/runtime/icon-dev.icns");
-    assert.match(production.sourceIconPath, /assets\/prod\/black-macos-1024\.png$/);
-    assert.equal(production.generatedIconPath, "/runtime/icon-prod.icns");
+    assert.match(
+      development.sourceIconPath,
+      /assets[\\/]orchestrator[\\/]orchestrator-macos-1024\.png$/,
+    );
+    assert.match(development.generatedIconPath, /runtime[\\/]icon-orchestrator-dev\.icns$/);
+    assert.equal(production.sourceIconPath, development.sourceIconPath);
+    assert.match(production.generatedIconPath, /runtime[\\/]icon-orchestrator\.icns$/);
   });
 });

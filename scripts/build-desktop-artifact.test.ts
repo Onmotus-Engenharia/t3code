@@ -39,6 +39,7 @@ import {
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
+  resolveWindowsDesktopExecutableName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
   resolveResourceMonitorRustTargets,
@@ -165,6 +166,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code Orchestrator");
   });
 
+  it("resolves the configured Windows executable name", () => {
+    assert.equal(resolveWindowsDesktopExecutableName(), "t3-code-orchestrator.exe");
+  });
+
   it("uses orchestrator icon artwork for every custom packaged version", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
       macIconPng: BRAND_ASSET_PATHS.orchestratorMacIconPng,
@@ -214,12 +219,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
-  it.effect("omits update feeds for pull request preview builds", () =>
+  it.effect("omits update feeds for preview and release builds without a verified fork feed", () =>
     Effect.gen(function* () {
       const preview = yield* createBuildConfig(
         "mac",
         "dmg",
-        "0.0.33-pr.8182.1",
+        "0.0.34-orchestrator.1-pr.8182.1",
         false,
         false,
         undefined,
@@ -228,7 +233,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const release = yield* createBuildConfig(
         "mac",
         "dmg",
-        "0.0.33",
+        "0.0.34-orchestrator.1",
         false,
         false,
         undefined,
@@ -236,14 +241,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
 
       assert.notProperty(preview, "publish");
-      assert.deepStrictEqual(release.publish, [
-        {
-          provider: "github",
-          owner: "pingdotgg",
-          repo: "t3code",
-          releaseType: "release",
-        },
-      ]);
+      assert.notProperty(release, "publish");
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(
@@ -482,7 +480,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...DESKTOP_EXTRA_RESOURCES,
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
-      assert.deepStrictEqual(win.nsis, { differentialPackage: true });
+      assert.deepStrictEqual(win.nsis, {
+        differentialPackage: true,
+        artifactName: "T3-Code-Orchestrator-Setup-${version}-${arch}.${ext}",
+        shortcutName: "T3 Code Orchestrator",
+        uninstallDisplayName: "T3 Code Orchestrator",
+      });
       // Linux must register only the custom renderer schemes so the generated
       // .desktop entry cannot replace the official app's OAuth handlers.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [

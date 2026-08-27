@@ -3265,6 +3265,8 @@ export default function Sidebar() {
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
+              isRunning:
+                thread.session?.status === "running" && thread.session.activeTurnId !== null,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,

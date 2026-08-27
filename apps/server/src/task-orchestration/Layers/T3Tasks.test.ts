@@ -37,7 +37,6 @@ const thread = (input: {
     latestTurn: null,
     worktreePath: null,
     title: input.id,
-    pinned: false,
     messages: [],
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),

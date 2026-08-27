@@ -527,8 +527,8 @@ export function useThreadActions() {
           ),
         );
       }
-      // reason "user" pins the thread active: auto-settle (PR merged /
-      // inactivity) stays suppressed until real activity clears the pin.
+      // reason "user" pins the thread active: configured inactivity
+      // settlement stays suppressed until real activity clears the pin.
       return unsettleThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId, reason: "user" },

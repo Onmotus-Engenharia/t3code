@@ -7,7 +7,6 @@ import {
   DEFAULT_RUNTIME_MODE,
   ClientOrchestrationCommand,
   ModelSelection,
-  ClientOrchestrationCommand,
   OrchestrationCommand,
   OrchestrationDispatchCommandError,
   OrchestrationEvent,
@@ -37,7 +36,6 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
-const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
@@ -90,7 +88,6 @@ it.effect("defaults task orchestration metadata on historical thread payloads", 
 
     assert.strictEqual(parsed.taskOrchestrationEnabled, false);
     assert.strictEqual(parsed.taskRelation, null);
-    assert.strictEqual(parsed.pinned, false);
   }),
 );
 
@@ -131,17 +128,21 @@ it.effect("keeps agent task creation internal while accepting public metadata co
     });
     assert.strictEqual(permission.type, "thread.task-orchestration.set");
 
-    const pin = yield* decodeClientOrchestrationCommand({
-      type: "thread.pin.set",
-      commandId: "cmd-pin",
-      threadId: "parent",
-      pinned: true,
-    });
-    assert.strictEqual(pin.type, "thread.pin.set");
+    assert.strictEqual(
+      (yield* Effect.exit(
+        decodeClientOrchestrationCommand({
+          type: "thread.pin.set",
+          commandId: "cmd-pin",
+          threadId: "parent",
+          pinned: true,
+        }),
+      ))._tag,
+      "Failure",
+    );
   }),
 );
 
-it.effect("decodes task orchestration and pin domain events", () =>
+it.effect("decodes task orchestration events and historical pin events", () =>
   Effect.gen(function* () {
     const base = {
       sequence: 1,

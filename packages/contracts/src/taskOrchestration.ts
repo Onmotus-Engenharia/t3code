@@ -23,24 +23,9 @@ export const ThreadTaskOrchestrationSetCommand = Schema.Struct({
 });
 export type ThreadTaskOrchestrationSetCommand = typeof ThreadTaskOrchestrationSetCommand.Type;
 
-export const ThreadPinSetCommand = Schema.Struct({
-  type: Schema.Literal("thread.pin.set"),
-  commandId: CommandId,
-  threadId: ThreadId,
-  pinned: Schema.Boolean,
-});
-export type ThreadPinSetCommand = typeof ThreadPinSetCommand.Type;
-
 export const ThreadTaskOrchestrationSetPayload = Schema.Struct({
   threadId: ThreadId,
   enabled: Schema.Boolean,
   updatedAt: IsoDateTime,
 });
 export type ThreadTaskOrchestrationSetPayload = typeof ThreadTaskOrchestrationSetPayload.Type;
-
-export const ThreadPinSetPayload = Schema.Struct({
-  threadId: ThreadId,
-  pinned: Schema.Boolean,
-  updatedAt: IsoDateTime,
-});
-export type ThreadPinSetPayload = typeof ThreadPinSetPayload.Type;

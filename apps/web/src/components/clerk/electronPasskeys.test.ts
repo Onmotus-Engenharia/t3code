@@ -37,10 +37,9 @@ describe("Electron passkeys", () => {
     const get = stubNativePasskeys();
     const passkeys = createPasskeys();
 
-    const result = await passkeys.get({
-      publicKeyOptions,
-      conditionalUI: true,
-    });
+    const result = await passkeys.get({ publicKeyOptions, conditionalUI: true } as Parameters<
+      typeof passkeys.get
+    >[0]);
 
     expect(get).not.toHaveBeenCalled();
     expect(result.error).toMatchObject({ code: "passkey_operation_aborted" });
@@ -50,10 +49,9 @@ describe("Electron passkeys", () => {
     const get = stubNativePasskeys();
     const passkeys = createPasskeys();
 
-    await passkeys.get({
-      publicKeyOptions,
-      conditionalUI: false,
-    });
+    await passkeys.get({ publicKeyOptions, conditionalUI: false } as Parameters<
+      typeof passkeys.get
+    >[0]);
 
     expect(get).toHaveBeenCalledOnce();
   });

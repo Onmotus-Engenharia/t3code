@@ -143,7 +143,6 @@ export const executeCreate = Effect.fn("T3Tasks.executeCreate")(function* (input
         workspaceMode,
         createdBy: "agent",
       },
-      pinned,
       deletedAt: null,
       messages: [],
       proposedPlans: [],
@@ -173,10 +172,9 @@ export const executeCreate = Effect.fn("T3Tasks.executeCreate")(function* (input
         Effect.andThen(
           pinned
             ? input.engine.dispatch({
-                type: "thread.pin.set",
+                type: "thread.pin",
                 commandId: pinCommandId!,
                 threadId: childThreadId,
-                pinned: true,
               })
             : Effect.void,
         ),

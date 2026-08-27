@@ -101,10 +101,19 @@ Each created thread persists:
 - `taskRelation`: parent thread, root thread, depth, workspace mode, and `createdBy: "agent"`;
 - `taskOrchestrationEnabled`: enabled for depth-1 children and disabled for depth-2 children, so
   permission propagates for one generation only;
-- `pinned`, which is also available to normal threads.
+- canonical pin metadata (`pinnedAt` and, when explicitly arranged, `pinOrderKey`), which is also
+  available to normal threads.
 
-Migration 035 stores the permission, relation JSON, indexed parent ID, and pin. Legacy events and
-snapshots decode with disabled/null/unpinned defaults.
+The task relation migration stores the permission, relation JSON, and indexed parent ID. Canonical
+pinning is represented by `thread.pin`, `thread.unpin`, and `thread.pin.reorder` commands with
+`thread.pinned`, `thread.unpinned`, and `thread.pin-reordered` events. Migration 045 reconciles
+older fork databases by backfilling `pinned_at` from the retired boolean `pinned` column only when
+no canonical timestamp already exists. The legacy `thread.pin-set` event remains decode-only for
+replay compatibility; new persistence and normal UI actions never write that boolean domain.
+
+`t3_tasks.pin` intentionally keeps its small `{ threadId, pinned }` tool shape as an agent-facing
+bridge. The service translates it to the same canonical pin or unpin command as the UI, so task
+agents and users share one durable ordering and lifecycle model.
 
 ## Authorization and limits
 
@@ -129,6 +138,14 @@ model without an effort leaves that model's provider default intact. Tool result
 projections and never include credentials, provider environment values, or approval secrets.
 Existing runtime, sandbox, interaction, and approval policies are copied without widening
 permissions.
+
+## Thread lifecycle and pull requests
+
+Pull-request state is status context only. A merged, closed, declined, or otherwise terminal pull
+request never settles a thread automatically. A thread settles only through an explicit user
+action or the configured inactivity policy after its normal blockers clear; real new activity wakes
+it. The legacy change-request auto-settle preference is retained only so older clients can decode
+their settings and is not consulted by the lifecycle.
 
 ## Workspace modes
 

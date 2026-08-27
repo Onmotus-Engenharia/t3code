@@ -100,7 +100,6 @@ const THREAD_SHELL = {
   settledAt: null,
   taskOrchestrationEnabled: false,
   taskRelation: null,
-  pinned: false,
   session: null,
   latestUserMessageAt: null,
   hasPendingApprovals: false,

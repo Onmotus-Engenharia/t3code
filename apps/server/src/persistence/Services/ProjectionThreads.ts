@@ -46,7 +46,6 @@ export const ProjectionThread = Schema.Struct({
   snoozedAt: Schema.NullOr(IsoDateTime),
   taskOrchestrationEnabled: NonNegativeInt,
   taskRelation: Schema.NullOr(TaskRelation),
-  pinned: NonNegativeInt,
   pinnedAt: Schema.NullOr(IsoDateTime),
   pinOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
   titleRegenerationRequestId: Schema.optional(Schema.NullOr(CommandId)),

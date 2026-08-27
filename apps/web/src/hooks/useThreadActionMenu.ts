@@ -17,7 +17,6 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
-import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
 import {
@@ -75,11 +74,9 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
-  /** Kept for upstream-compatible caller inputs; it never auto-settles this fork. */
-  readonly changeRequest?: ChangeRequestSettleSource | null;
   readonly onStartRename: () => void;
 }) {
-  const { threadRef, projectCwd, changeRequest = null, onStartRename } = input;
+  const { threadRef, projectCwd, onStartRename } = input;
   const {
     settleThread,
     unsettleThread,
@@ -96,7 +93,6 @@ export function useThreadActionMenu(input: {
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
-  const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -128,12 +124,6 @@ export function useThreadActionMenu(input: {
       toastManager.add({ type: "success", title: "Branch copied", description: branch });
     },
     onError: (error) => failureToast("Failed to copy branch", error),
-  });
-  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
-    onCopy: ({ threadId }) => {
-      toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
-    },
-    onError: (error) => failureToast("Failed to copy thread ID", error),
   });
 
   const openMenu = useCallback(
@@ -184,8 +174,6 @@ export function useThreadActionMenu(input: {
               // parked-thread banner within the same minute.
               now: `${now.toISOString().slice(0, 16)}:00.000Z`,
               autoSettleAfterDays,
-               autoSettleOnMerge,
-               changeRequest,
             }),
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
@@ -372,9 +360,6 @@ export function useThreadActionMenu(input: {
             copyPathToClipboard(workspacePath, { path: workspacePath });
             return;
           }
-          case "copy-thread-id":
-            copyThreadIdToClipboard(thread.id, { threadId: thread.id });
-            return;
           case "copy-branch":
             if (thread.branch) {
               copyBranchToClipboard(thread.branch, { branch: thread.branch });
@@ -437,10 +422,8 @@ export function useThreadActionMenu(input: {
     },
     [
       archiveThread,
-       autoSettleAfterDays,
-       autoSettleOnMerge,
-       changeRequest,
-       confirmThreadArchive,
+      autoSettleAfterDays,
+      confirmThreadArchive,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,

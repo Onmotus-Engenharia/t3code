@@ -18,7 +18,6 @@ import {
   LoaderCircleIcon,
   WorkflowIcon,
 } from "lucide-react";
-import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import {
   memo,
   useCallback,
@@ -60,8 +59,6 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
-  /** PR feeding the settled classification, resolved by ChatView. */
-  changeRequest?: ChangeRequestSettleSource | null;
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
@@ -173,7 +170,6 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   isServerThread,
-  changeRequest,
   activeProjectName,
   activeProjectCwd,
   activeProjectFaviconPath,
@@ -259,7 +255,6 @@ export const ChatHeader = memo(function ChatHeader({
   const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
     projectCwd: activeProjectCwd,
-    changeRequest,
     onStartRename: startRename,
   });
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);

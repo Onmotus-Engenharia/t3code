@@ -343,7 +343,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             workspaceMode: "shared",
             createdBy: "agent",
           },
-          pinned: false,
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           titleRegeneration: null,
@@ -482,7 +481,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             workspaceMode: "shared",
             createdBy: "agent",
           },
-          pinned: false,
           latestTokenUsage: {
             usedTokens: 120_000,
             totalProcessedTokens: 8_100_000,
