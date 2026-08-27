@@ -28,10 +28,27 @@ describe("CodexRateLimitIndicator", () => {
     expect(markup).toContain("Resets");
   });
 
+  it("does not mislabel a weekly-only limit as five-hour usage", () => {
+    const markup = renderToStaticMarkup(
+      <CodexRateLimitIndicator
+        rateLimits={{
+          primary: { usedPercent: 11, resetsAt: 1_788_452_877, windowDurationMins: 10_080 },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Week");
+    expect(markup).not.toContain(">5h<");
+    expect(markup).toContain('aria-valuenow="11"');
+  });
+
   it("clamps malformed percentages", () => {
     const markup = renderToStaticMarkup(
       <CodexRateLimitIndicator
-        rateLimits={{ primary: { usedPercent: -4 }, secondary: { usedPercent: 140 } }}
+        rateLimits={{
+          primary: { usedPercent: -4, windowDurationMins: 300 },
+          secondary: { usedPercent: 140, windowDurationMins: 10_080 },
+        }}
       />,
     );
 

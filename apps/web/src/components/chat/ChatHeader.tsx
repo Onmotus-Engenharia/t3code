@@ -109,6 +109,8 @@ export function resolveRenameCommit(input: {
 // events (the second click dismisses it and dblclick still fires), so it
 // opens immediately.
 const TITLE_MENU_OPEN_DELAY_MS = 500;
+export const THREAD_ACTIONS_CHEVRON_CLASS =
+  "size-3.5 shrink-0 text-muted-foreground opacity-70 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100";
 
 export function shouldShowOpenInPicker(input: {
   readonly activeProjectName: string | undefined;
@@ -407,7 +409,7 @@ export const ChatHeader = memo(function ChatHeader({
                 <ChevronDownIcon
                   aria-hidden
                   data-thread-title-chevron
-                  className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
+                  className={THREAD_ACTIONS_CHEVRON_CLASS}
                 />
               </TooltipTrigger>
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>

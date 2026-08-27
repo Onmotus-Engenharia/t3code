@@ -107,11 +107,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { readThreadShell, useProjects, useThreadShells } from "../state/entities";
-import {
-  environmentServerConfigsAtom,
-  primaryCodexRateLimitsAtom,
-  primaryServerKeybindingsAtom,
-} from "../state/server";
+import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
@@ -3254,6 +3250,12 @@ export default function Sidebar() {
         const hasTaskDescendants = splitCatalog.some(
           (entry) => entry.rootThreadKey === rootThreadKey,
         );
+        const canChooseAnotherSplitTarget = threads.some(
+          (candidate) =>
+            candidate.archivedAt === null &&
+            serverSplitTargetKey(scopeThreadRef(candidate.environmentId, candidate.id)) !==
+              splitTargetKey,
+        );
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
@@ -3279,6 +3281,7 @@ export default function Sidebar() {
                 activeGroupPaneCount: activeSplitGroup?.targetKeys.length ?? null,
                 hasDifferentFocusedTarget:
                   focusedTargetKey !== null && focusedTargetKey !== splitTargetKey,
+                canChooseAnotherTarget: canChooseAnotherSplitTarget,
                 hasTaskDescendants,
                 hasTaskSplitGroup: taskSplitGroup !== undefined,
               },
@@ -3324,7 +3327,10 @@ export default function Sidebar() {
             return;
           }
           case "start-split-view": {
-            if (!focusedTargetKey || focusedTargetKey === splitTargetKey) return;
+            if (!focusedTargetKey || focusedTargetKey === splitTargetKey) {
+              openCommandPalette({ open: "start-split-view" });
+              return;
+            }
             const groupId = threadSplitStore
               .getState()
               .openTargets([focusedTargetKey, splitTargetKey], {
@@ -3507,6 +3513,7 @@ export default function Sidebar() {
       splitCatalog,
       startThreadRename,
       threadNavigation,
+      threads,
       updateThreadMetadata,
       timestampFormat,
     ],
@@ -3610,7 +3617,6 @@ export default function Sidebar() {
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
     shortcutLabelForCommand(keybindings, "chat.newLocal");
-  const codexRateLimits = useAtomValue(primaryCodexRateLimitsAtom);
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -4196,7 +4202,7 @@ export default function Sidebar() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarChromeFooter codexRateLimits={codexRateLimits} />
+      <SidebarChromeFooter />
     </>
   );
 }

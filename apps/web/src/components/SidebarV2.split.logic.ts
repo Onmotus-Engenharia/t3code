@@ -32,6 +32,7 @@ export function resolveSidebarV2SingleSplitActionIds(input: {
   grouped: boolean;
   activeGroupPaneCount: number | null;
   hasDifferentFocusedTarget: boolean;
+  canChooseAnotherTarget: boolean;
   hasTaskDescendants: boolean;
   hasTaskSplitGroup: boolean;
 }) {
@@ -40,7 +41,9 @@ export function resolveSidebarV2SingleSplitActionIds(input: {
     actions.push("focus-in-split-view", "remove-from-split-view");
   } else {
     if (input.activeGroupPaneCount !== null) actions.push("open-in-current-split-view");
-    if (input.hasDifferentFocusedTarget) actions.push("start-split-view");
+    if (input.hasDifferentFocusedTarget || input.canChooseAnotherTarget) {
+      actions.push("start-split-view");
+    }
   }
   if (input.hasTaskDescendants) {
     actions.push(input.hasTaskSplitGroup ? "open-task-split-view" : "split-task-tree");

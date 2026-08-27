@@ -27,11 +27,11 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
-    | "copy"
-    | "copy-path"
-    | "copy-thread-id"
-    | "copy-branch"
-    | "archive"
+  | "copy"
+  | "copy-path"
+  | "copy-thread-id"
+  | "copy-branch"
+  | "archive"
   | "delete";
 
 export interface ThreadActionMenuState {
@@ -58,6 +58,7 @@ export interface ThreadActionMenuState {
     readonly grouped: boolean;
     readonly activeGroupPaneCount: number | null;
     readonly hasDifferentFocusedTarget: boolean;
+    readonly canChooseAnotherTarget: boolean;
     readonly hasTaskDescendants: boolean;
     readonly hasTaskSplitGroup: boolean;
   };
@@ -101,11 +102,15 @@ export function buildThreadActionMenuItems(
                 },
               ]
             : []),
-          ...(state.split?.hasDifferentFocusedTarget
+          ...(state.split
             ? [
                 {
                   id: "start-split-view" as const,
-                  label: "Start split view with current thread",
+                  label: state.split.hasDifferentFocusedTarget
+                    ? "Start split view with current thread"
+                    : "Start split view...",
+                  disabled:
+                    !state.split.hasDifferentFocusedTarget && !state.split.canChooseAnotherTarget,
                 },
               ]
             : []),
@@ -170,16 +175,20 @@ export function buildThreadActionMenuItems(
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
     {
+      id: "copy-thread-id",
+      label: "Copy thread ID",
+      icon: "hash",
+      separatorBefore: true,
+    },
+    {
       id: "copy",
       label: "Copy",
       icon: "copy",
-      separatorBefore: true,
       children: [
         { id: "copy-path", label: "Path", icon: "folder" },
         ...(state.branch
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
-        { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
     // Archive removes the thread from the sidebar while keeping its

@@ -9,7 +9,13 @@ import {
   resolveRenameCommit,
   shouldShowNudgeAgentControl,
   shouldShowOpenInPicker,
+  THREAD_ACTIONS_CHEVRON_CLASS,
 } from "./ChatHeader";
+
+it("keeps the thread-actions chevron visibly discoverable", () => {
+  expect(THREAD_ACTIONS_CHEVRON_CLASS).toContain("opacity-70");
+  expect(THREAD_ACTIONS_CHEVRON_CLASS).not.toContain("opacity-0 ");
+});
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");

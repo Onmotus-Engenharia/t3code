@@ -91,6 +91,11 @@ describe("reduceCommandPaletteUiState", () => {
       mode: "command",
       openIntent: { kind: "new-thread-in" },
     });
+    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenStartSplitView" })).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "start-split-view" },
+    });
   });
 
   it("preserves the mode on close and resets it on open", () => {

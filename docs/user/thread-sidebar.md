@@ -4,12 +4,14 @@ Pin a thread from its context menu to keep it in the pinned section above your a
 Pinned threads are shown independently of their project, including when you connect to more than
 one environment.
 
-Pinned threads still move to **Settled** when they become inactive. They also move when their pull
-request merges if **Auto-settle merged threads** is enabled.
+Open the same action menu by clicking the visible chevron beside the active thread title or by
+right-clicking its sidebar row. **Copy thread ID** is a top-level action in this menu.
+
+Pinned threads still move to **Settled** when they become inactive. Pull-request state does not
+settle a thread in the Orchestrator distribution.
 
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
-in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged
-threads** is enabled. Right-click the same link and choose **Unlink from thread** to remove it.
+in the sidebar. Right-click the same link and choose **Unlink from thread** to remove it.
 
 On web and desktop, drag a pinned thread to change its position. On mobile, open the thread's menu
 and choose **Move up** or **Move down**. The order is stored by the server and appears on your

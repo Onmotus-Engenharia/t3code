@@ -2153,6 +2153,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
+          { id: "start-split-view", label: "Start split view..." },
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2183,6 +2184,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             }),
           );
         }
+        return;
+      }
+
+      if (clicked === "start-split-view") {
+        openCommandPalette({ open: "start-split-view" });
         return;
       }
 

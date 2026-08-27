@@ -2,7 +2,8 @@
 
 T3 Code shows Codex account usage when the connected environment reports current rate limits.
 
-- On web and desktop, the 5-hour and weekly meters appear above **Settings** in the sidebar.
+- On web and desktop, the 5-hour and weekly meters appear in the sidebar footer in default,
+  legacy, and Settings navigation modes.
 - On mobile, the same meters appear at the top of **Settings**.
 - In an active Codex thread, the context information panel also shows the selected account's
   5-hour and weekly usage when those windows are available.

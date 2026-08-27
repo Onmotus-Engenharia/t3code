@@ -12,11 +12,11 @@ relationships, move worktrees or branches, or affect an agent or provider sessio
 You can manage split views from several places:
 
 - Drag one thread onto another, or drag a thread into an existing split view.
-- Open a thread's context menu to start a split with the current thread, add it to the current
-  split, focus it in its existing split, or remove it.
+- Open the current thread's action menu and choose **Start split view...** to search for the second
+  thread. A different sidebar thread can still start a split with the currently focused thread.
 - Select 2–50 actionable thread rows and choose **Open in split view**.
-- Use the command palette to split a task tree, add threads, remove the focused pane, close the
-  split, change its layout, or focus the previous or next pane.
+- Use the command palette to start a split, split a task tree, add threads, remove the focused pane,
+  close the split, change its layout, or focus the previous or next pane.
 - Use a pane's remove control or the focused pane's split-view controls.
 
 The **Split views** shelf near the top of the thread list shows every saved group. Its thread chips

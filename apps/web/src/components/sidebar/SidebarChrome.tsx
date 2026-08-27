@@ -6,12 +6,13 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
-import type { ProviderRateLimits } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
+import { primaryCodexRateLimitsAtom } from "../../state/server";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -240,15 +241,16 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter({
-  codexRateLimits = null,
-}: {
-  codexRateLimits?: ProviderRateLimits | null;
-}) {
+export const SidebarCodexRateLimits = memo(function SidebarCodexRateLimits() {
+  const codexRateLimits = useAtomValue(primaryCodexRateLimitsAtom);
+  return <CodexRateLimitIndicator rateLimits={codexRateLimits} />;
+});
+
+export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
-      <CodexRateLimitIndicator rateLimits={codexRateLimits} />
+      <SidebarCodexRateLimits />
       <SidebarUpdateArchitectureWarning />
       <SidebarUtilityMenu />
     </SidebarFooter>

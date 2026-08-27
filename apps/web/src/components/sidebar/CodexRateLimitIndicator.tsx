@@ -1,7 +1,9 @@
 import { memo } from "react";
 import type { ProviderRateLimitWindow, ProviderRateLimits } from "@t3tools/contracts";
+import { selectCodexUsageWindows } from "@t3tools/shared/providerRateLimits";
 
 import { cn } from "../../lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type RateLimitRowProps = {
   label: string;
@@ -10,12 +12,6 @@ type RateLimitRowProps = {
 
 function clampPercent(percent: number) {
   return Math.min(100, Math.max(0, percent));
-}
-
-function hasUsage(
-  window: ProviderRateLimitWindow | undefined,
-): window is ProviderRateLimitWindow & { readonly usedPercent: number } {
-  return typeof window?.usedPercent === "number" && Number.isFinite(window.usedPercent);
 }
 
 function formatResetTime(value: number | undefined) {
@@ -65,19 +61,14 @@ export const CodexRateLimitIndicator = memo(function CodexRateLimitIndicator({
 }: {
   rateLimits: ProviderRateLimits | null;
 }) {
-  const availableWindows = [rateLimits?.primary, rateLimits?.secondary];
-  const fiveHour =
-    availableWindows.find((window) => window?.windowDurationMins === 300) ?? rateLimits?.primary;
-  const weekly =
-    availableWindows.find((window) => window?.windowDurationMins === 10_080) ??
-    rateLimits?.secondary;
+  const { fiveHour, weekly } = selectCodexUsageWindows(rateLimits);
   const windows: Array<
     readonly [string, ProviderRateLimitWindow & { readonly usedPercent: number }]
   > = [];
-  if (hasUsage(fiveHour)) {
+  if (fiveHour) {
     windows.push(["5h", fiveHour]);
   }
-  if (hasUsage(weekly) && weekly !== fiveHour) {
+  if (weekly) {
     windows.push(["Week", weekly]);
   }
 
@@ -92,15 +83,23 @@ export const CodexRateLimitIndicator = memo(function CodexRateLimitIndicator({
     .join("\n");
 
   return (
-    <div
-      aria-label="Codex usage limits"
-      className="space-y-1 px-2 py-1"
-      data-slot="codex-rate-limit-indicator"
-      title={title}
-    >
-      {windows.map(([label, window]) => (
-        <RateLimitRow key={label} label={label} window={window} />
-      ))}
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            aria-label="Codex usage limits"
+            className="space-y-1 px-2 py-1"
+            data-slot="codex-rate-limit-indicator"
+          />
+        }
+      >
+        {windows.map(([label, window]) => (
+          <RateLimitRow key={label} label={label} window={window} />
+        ))}
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        <span className="whitespace-pre-line">{title}</span>
+      </TooltipPopup>
+    </Tooltip>
   );
 });

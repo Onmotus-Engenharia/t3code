@@ -36,6 +36,7 @@ import {
 } from "../state/entities";
 import { resolveThreadRouteTarget, threadRouteTargetToSplitKey } from "../threadRoutes";
 import { useThreadNavigation } from "../threadSplitNavigation";
+import { openCommandPalette } from "../commandPaletteBus";
 import {
   getThreadSplitGroupForTarget,
   THREAD_SPLIT_MAX_PANES,
@@ -163,6 +164,12 @@ export function useThreadActionMenu(input: {
         const hasTaskDescendants = splitCatalog.some(
           (entry) => entry.rootThreadKey === rootThreadKey,
         );
+        const canChooseAnotherSplitTarget = threads.some(
+          (candidate) =>
+            candidate.archivedAt === null &&
+            `server:${scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id))}` !==
+              splitTargetKey,
+        );
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
@@ -186,6 +193,7 @@ export function useThreadActionMenu(input: {
             activeGroupPaneCount: activeSplitGroup?.targetKeys.length ?? null,
             hasDifferentFocusedTarget:
               focusedTargetKey !== null && focusedTargetKey !== splitTargetKey,
+            canChooseAnotherTarget: canChooseAnotherSplitTarget,
             hasTaskDescendants,
             hasTaskSplitGroup: taskSplitGroup !== undefined,
           },
@@ -258,7 +266,10 @@ export function useThreadActionMenu(input: {
             return;
           }
           case "start-split-view": {
-            if (!focusedTargetKey || focusedTargetKey === splitTargetKey) return;
+            if (!focusedTargetKey || focusedTargetKey === splitTargetKey) {
+              openCommandPalette({ open: "start-split-view" });
+              return;
+            }
             const groupId = threadSplitStore
               .getState()
               .openTargets([focusedTargetKey, splitTargetKey], {
@@ -439,6 +450,7 @@ export function useThreadActionMenu(input: {
       splitCatalog,
       threadRef,
       threadNavigation,
+      threads,
       timestampFormat,
       unpinThread,
       unsettleThread,

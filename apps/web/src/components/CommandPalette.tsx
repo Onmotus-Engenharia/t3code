@@ -409,6 +409,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   );
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
+  const openStartSplitView = useCallback(() => dispatch({ _tag: "OpenStartSplitView" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
@@ -493,13 +494,15 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       onOpenCommandPalette((detail) => {
         if (detail.open === "new-thread-in") {
           openNewThreadIn();
+        } else if (detail.open === "start-split-view") {
+          openStartSplitView();
         } else if (detail.open === "add-project") {
           openAddProject();
         } else {
           setOpen(true);
         }
       }),
-    [openAddProject, openNewThreadIn, setOpen],
+    [openAddProject, openNewThreadIn, openStartSplitView, setOpen],
   );
 
   return (
@@ -1104,6 +1107,49 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
+  const startSplitSourceTargetKey = splitCommands.focusedTarget
+    ? threadRouteTargetToSplitKey(splitCommands.focusedTarget)
+    : null;
+  const startSplitThreadItems = useMemo(() => {
+    const sourceTargetKey = startSplitSourceTargetKey;
+    if (!sourceTargetKey) return [];
+
+    return buildThreadActionItems({
+      threads: threads.filter(
+        (thread) =>
+          threadRouteTargetToSplitKey({
+            kind: "server",
+            threadRef: scopeThreadRef(thread.environmentId, thread.id),
+          }) !== sourceTargetKey,
+      ),
+      projectTitleById,
+      sortOrder: clientSettings.sidebarThreadSortOrder,
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      runThread: async (thread) => {
+        const target = {
+          kind: "server" as const,
+          threadRef: scopeThreadRef(thread.environmentId, thread.id),
+        };
+        const targetKey = threadRouteTargetToSplitKey(target);
+        const groupId = threadSplitStore.getState().openTargets([sourceTargetKey, targetKey], {
+          mode: "new-group",
+          focusTargetKey: targetKey,
+        });
+        if (!groupId) return;
+        await splitCommands.navigation.openTarget(target, {
+          history: "push",
+          disposition: "activate-existing-group",
+        });
+      },
+    });
+  }, [
+    clientSettings.sidebarThreadSortOrder,
+    projectTitleById,
+    splitCommands.navigation,
+    startSplitSourceTargetKey,
+    threads,
+  ]);
+
   const allThreadItems = useMemo(
     () =>
       buildThreadActionItems({
@@ -1507,6 +1553,32 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
   ]);
 
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "start-split-view") return;
+    clearOpenIntent();
+    setViewStack([]);
+    setQuery("");
+    if (startSplitThreadItems.length === 0) {
+      setOpen(false);
+      toastManager.add({
+        type: "info",
+        title: "No other threads available",
+        description: "Create another thread before starting a split view.",
+      });
+      return;
+    }
+    pushPaletteView({
+      addonIcon: <MessageSquareIcon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "split-threads",
+          label: "Choose a thread",
+          items: startSplitThreadItems,
+        },
+      ],
+    });
+  }, [clearOpenIntent, openIntent, pushPaletteView, setOpen, startSplitThreadItems]);
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -1603,6 +1675,19 @@ function OpenCommandPaletteDialog(props: {
       openAddProjectFlow();
     },
   });
+
+  if (!splitCommands.group && startSplitSourceTargetKey) {
+    actionItems.push({
+      kind: "submenu",
+      value: "action:start-split-view",
+      searchTerms: ["start split view", "open threads side by side", "multiple panes"],
+      title: "Start split view...",
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <MessageSquareIcon className={ADDON_ICON_CLASS} />,
+      disabled: startSplitThreadItems.length === 0,
+      groups: [{ value: "split-threads", label: "Choose a thread", items: startSplitThreadItems }],
+    });
+  }
 
   const focusedServerTarget =
     splitCommands.focusedTarget?.kind === "server" ? splitCommands.focusedTarget : null;

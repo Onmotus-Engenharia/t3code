@@ -34,7 +34,7 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "archive", "delete"]);
+    ).toEqual(["rename", "mark-unread", "copy-thread-id", "copy", "archive", "delete"]);
   });
 
   it("includes branch items only for threads with a branch", () => {
@@ -71,10 +71,13 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
   });
-  it("keeps Copy thread ID in the shared per-thread menu after the v0.0.33 rewrite", () => {
-    const copy = buildThreadActionMenuItems(baseState).find((item) => item.id === "copy");
-    expect(copy?.children).toContainEqual(
-      expect.objectContaining({ id: "copy-thread-id", label: "Thread ID" }),
+  it("keeps Copy thread ID as a top-level per-thread action", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    expect(items).toContainEqual(
+      expect.objectContaining({ id: "copy-thread-id", label: "Copy thread ID" }),
+    );
+    expect(items.find((item) => item.id === "copy")?.children).not.toContainEqual(
+      expect.objectContaining({ id: "copy-thread-id" }),
     );
   });
 
@@ -85,6 +88,7 @@ describe("buildThreadActionMenuItems", () => {
         grouped: false,
         activeGroupPaneCount: 2,
         hasDifferentFocusedTarget: true,
+        canChooseAnotherTarget: true,
         hasTaskDescendants: true,
         hasTaskSplitGroup: false,
       },
@@ -99,6 +103,7 @@ describe("buildThreadActionMenuItems", () => {
         grouped: true,
         activeGroupPaneCount: THREAD_SPLIT_MAX_PANES,
         hasDifferentFocusedTarget: true,
+        canChooseAnotherTarget: true,
         hasTaskDescendants: true,
         hasTaskSplitGroup: true,
       },
@@ -111,6 +116,34 @@ describe("buildThreadActionMenuItems", () => {
       ]),
     );
     expect(groupedItems.map((item) => item.id)).not.toContain("start-split-view");
+  });
+
+  it("offers a split-view picker for the currently focused thread", () => {
+    const available = buildThreadActionMenuItems({
+      ...baseState,
+      split: {
+        grouped: false,
+        activeGroupPaneCount: null,
+        hasDifferentFocusedTarget: false,
+        canChooseAnotherTarget: true,
+        hasTaskDescendants: false,
+        hasTaskSplitGroup: false,
+      },
+    }).find((item) => item.id === "start-split-view");
+    expect(available).toMatchObject({ label: "Start split view...", disabled: false });
+
+    const unavailable = buildThreadActionMenuItems({
+      ...baseState,
+      split: {
+        grouped: false,
+        activeGroupPaneCount: null,
+        hasDifferentFocusedTarget: false,
+        canChooseAnotherTarget: false,
+        hasTaskDescendants: false,
+        hasTaskSplitGroup: false,
+      },
+    }).find((item) => item.id === "start-split-view");
+    expect(unavailable).toMatchObject({ label: "Start split view...", disabled: true });
   });
 
   it("keeps the sidebar's local task nesting action gated to task children", () => {
