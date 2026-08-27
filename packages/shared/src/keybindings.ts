@@ -56,6 +56,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     command: "splitView.focusNext",
     when: "splitViewActive",
   },
+  { key: "mod+shift+s", command: "thread.settle", when: "!terminalFocus" },
   ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
     key: `mod+${index + 1}`,
     command,

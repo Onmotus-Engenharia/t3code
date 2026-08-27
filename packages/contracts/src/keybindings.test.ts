@@ -44,6 +44,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedRightPanelToggle.command, "rightPanel.toggle");
 
+    const parsedRightPanelToggleMaximized = yield* decode(KeybindingRule, {
+      key: "mod+shift+m",
+      command: "rightPanel.toggleMaximized",
+    });
+    assert.strictEqual(parsedRightPanelToggleMaximized.command, "rightPanel.toggleMaximized");
+
     const parsedClose = yield* decode(KeybindingRule, {
       key: "mod+w",
       command: "terminal.close",
@@ -112,6 +118,12 @@ it.effect("parses keybinding rules", () =>
       });
       assert.strictEqual(parsedSplitView.command, command);
     }
+    const parsedThreadSettle = yield* decode(KeybindingRule, {
+      key: "mod+shift+s",
+      command: "thread.settle",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedThreadSettle.command, "thread.settle");
   }),
 );
 

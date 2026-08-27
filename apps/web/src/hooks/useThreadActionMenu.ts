@@ -17,6 +17,7 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
+import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
 import {
@@ -74,9 +75,11 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
+  /** Kept for upstream-compatible caller inputs; it never auto-settles this fork. */
+  readonly changeRequest?: ChangeRequestSettleSource | null;
   readonly onStartRename: () => void;
 }) {
-  const { threadRef, projectCwd, onStartRename } = input;
+  const { threadRef, projectCwd, changeRequest = null, onStartRename } = input;
   const {
     settleThread,
     unsettleThread,
@@ -84,6 +87,7 @@ export function useThreadActionMenu(input: {
     unsnoozeThread,
     pinThread,
     unpinThread,
+    archiveThread,
     deleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -92,7 +96,9 @@ export function useThreadActionMenu(input: {
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
+  const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+  const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const routeTarget = useParams({
     strict: false,
@@ -122,6 +128,12 @@ export function useThreadActionMenu(input: {
       toastManager.add({ type: "success", title: "Branch copied", description: branch });
     },
     onError: (error) => failureToast("Failed to copy branch", error),
+  });
+  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
+    onCopy: ({ threadId }) => {
+      toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
+    },
+    onError: (error) => failureToast("Failed to copy thread ID", error),
   });
 
   const openMenu = useCallback(
@@ -172,10 +184,13 @@ export function useThreadActionMenu(input: {
               // parked-thread banner within the same minute.
               now: `${now.toISOString().slice(0, 16)}:00.000Z`,
               autoSettleAfterDays,
+               autoSettleOnMerge,
+               changeRequest,
             }),
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
+          isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
           split: {
@@ -365,6 +380,30 @@ export function useThreadActionMenu(input: {
               copyBranchToClipboard(thread.branch, { branch: thread.branch });
             }
             return;
+          case "copy-thread-id":
+            copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "archive": {
+            if (confirmThreadArchive) {
+              const confirmed = await settlePromise(() =>
+                api.dialogs.confirm(`Archive thread "${thread.title}"?`),
+              );
+              if (confirmed._tag === "Failure" || !confirmed.value) return;
+            }
+            let didArchive = false;
+            const result = await archiveThread(threadRef, {
+              onArchived: () => {
+                didArchive = true;
+              },
+            });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              failureToast(
+                didArchive ? "Thread archived, but navigation failed" : "Failed to archive thread",
+                squashAtomCommandFailure(result),
+              );
+            }
+            return;
+          }
           case "delete": {
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
@@ -397,7 +436,11 @@ export function useThreadActionMenu(input: {
       })();
     },
     [
-      autoSettleAfterDays,
+      archiveThread,
+       autoSettleAfterDays,
+       autoSettleOnMerge,
+       changeRequest,
+       confirmThreadArchive,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
@@ -421,5 +464,9 @@ export function useThreadActionMenu(input: {
     ],
   );
 
-  return { openMenu };
+  const closeMenu = useCallback(() => {
+    void readLocalApi()?.contextMenu.close();
+  }, []);
+
+  return { openMenu, closeMenu };
 }
