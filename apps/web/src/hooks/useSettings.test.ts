@@ -4,9 +4,14 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeEnvironmentSettings, resolveEnvironmentIdentificationMode } from "./useSettings";
+import {
+  mergeEnvironmentSettings,
+  resolveEnvironmentIdentificationMode,
+  splitSettingsPatch,
+} from "./useSettings";
 
 describe("resolveEnvironmentIdentificationMode", () => {
   it("keeps identification hidden until client settings hydrate", () => {
@@ -75,5 +80,23 @@ describe("mergeEnvironmentSettings", () => {
 
     expect(settings.providerInstances).toBe(serverSettings.providerInstances);
     expect(settings.favorites).toBe(clientSettings.favorites);
+  });
+});
+
+describe("splitSettingsPatch", () => {
+  it("routes automatic continuation controls through the server settings patch", () => {
+    const cooldown = Duration.seconds(45);
+    const { serverPatch, clientPatch } = splitSettingsPatch({
+      automaticContinuationEnabled: false,
+      automaticContinuationRetryCooldown: cooldown,
+      automaticContinuationMaxConsecutiveAttempts: 3,
+    });
+
+    expect(serverPatch).toEqual({
+      automaticContinuationEnabled: false,
+      automaticContinuationRetryCooldown: cooldown,
+      automaticContinuationMaxConsecutiveAttempts: 3,
+    });
+    expect(clientPatch).toEqual({});
   });
 });

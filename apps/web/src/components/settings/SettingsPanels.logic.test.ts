@@ -14,6 +14,7 @@ import {
   formatDiagnosticsDescription,
   getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
+  hasChangedAutomaticContinuationSettings,
   isSamePreviewViewport,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
@@ -134,6 +135,30 @@ describe("background activity settings restore", () => {
         automaticGitFetchInterval,
       },
     });
+  });
+});
+
+describe("automatic continuation settings restore", () => {
+  it("treats the server defaults as clean and each override as changed", () => {
+    expect(hasChangedAutomaticContinuationSettings(DEFAULT_UNIFIED_SETTINGS)).toBe(false);
+    expect(
+      hasChangedAutomaticContinuationSettings({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        automaticContinuationEnabled: false,
+      }),
+    ).toBe(true);
+    expect(
+      hasChangedAutomaticContinuationSettings({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        automaticContinuationRetryCooldown: Duration.seconds(45),
+      }),
+    ).toBe(true);
+    expect(
+      hasChangedAutomaticContinuationSettings({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        automaticContinuationMaxConsecutiveAttempts: 3,
+      }),
+    ).toBe(true);
   });
 });
 

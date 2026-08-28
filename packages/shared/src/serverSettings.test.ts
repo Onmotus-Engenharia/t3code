@@ -26,6 +26,21 @@ describe("serverSettings helpers", () => {
     );
   });
 
+  it("applies automatic continuation patches without disturbing other server settings", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      automaticContinuationEnabled: false,
+      automaticContinuationRetryCooldown: Duration.seconds(90),
+      automaticContinuationMaxConsecutiveAttempts: 4,
+    });
+
+    expect(next.automaticContinuationEnabled).toBe(false);
+    expect(Duration.toMillis(next.automaticContinuationRetryCooldown)).toBe(90_000);
+    expect(next.automaticContinuationMaxConsecutiveAttempts).toBe(4);
+    expect(next.enableProviderUpdateChecks).toBe(
+      DEFAULT_SERVER_SETTINGS.enableProviderUpdateChecks,
+    );
+  });
+
   it("extracts persisted observability settings", () => {
     expect(
       extractPersistedServerObservabilitySettings({

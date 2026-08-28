@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -27,6 +28,7 @@ const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
@@ -392,7 +394,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               checkpointTurnCount: 1,
               checkpointRef: asCheckpointRef("checkpoint-1"),
               status: "ready",
-              files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
+              files: [
+                {
+                  path: "README.md",
+                  kind: "modified",
+                  additions: 2,
+                  deletions: 1,
+                },
+              ],
               assistantMessageId: asMessageId("message-1"),
               completedAt: "2026-02-24T00:00:08.000Z",
             },
@@ -1851,17 +1860,23 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         )
       `;
 
-      const literalPercent = yield* snapshotQuery.searchThreads({ query: "100%" });
+      const literalPercent = yield* snapshotQuery.searchThreads({
+        query: "100%",
+      });
       assert.deepStrictEqual(
         literalPercent.matches.map((match) => [match.threadId, match.source]),
         [[ThreadId.make("thread-active"), "user"]],
       );
 
-      const user = yield* snapshotQuery.searchThreads({ query: "user needle" });
+      const user = yield* snapshotQuery.searchThreads({
+        query: "user needle",
+      });
       assert.equal(user.matches[0]?.source, "user");
       assert.match(user.matches[0]?.snippet ?? "", /USER needle/);
 
-      const assistant = yield* snapshotQuery.searchThreads({ query: "FINAL NEEDLE" });
+      const assistant = yield* snapshotQuery.searchThreads({
+        query: "FINAL NEEDLE",
+      });
       assert.equal(assistant.matches[0]?.source, "assistant");
 
       const deduped = yield* snapshotQuery.searchThreads({ query: "needle" });
@@ -2039,11 +2054,31 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       pendingMessage: string | null;
       at: string;
     }> = [
-      { turn: "turn-1", pendingMessage: "user-msg-1", at: "2026-03-01T00:00:00.000Z" },
-      { turn: "turn-2", pendingMessage: null, at: "2026-03-01T00:01:00.000Z" },
-      { turn: "turn-3", pendingMessage: null, at: "2026-03-01T00:02:00.000Z" },
-      { turn: "turn-4", pendingMessage: "user-msg-4", at: "2026-03-01T00:03:00.000Z" },
-      { turn: "turn-5", pendingMessage: "user-msg-5", at: "2026-03-01T00:04:00.000Z" },
+      {
+        turn: "turn-1",
+        pendingMessage: "user-msg-1",
+        at: "2026-03-01T00:00:00.000Z",
+      },
+      {
+        turn: "turn-2",
+        pendingMessage: null,
+        at: "2026-03-01T00:01:00.000Z",
+      },
+      {
+        turn: "turn-3",
+        pendingMessage: null,
+        at: "2026-03-01T00:02:00.000Z",
+      },
+      {
+        turn: "turn-4",
+        pendingMessage: "user-msg-4",
+        at: "2026-03-01T00:03:00.000Z",
+      },
+      {
+        turn: "turn-5",
+        pendingMessage: "user-msg-5",
+        at: "2026-03-01T00:04:00.000Z",
+      },
     ];
     for (const { turn, pendingMessage, at } of turns) {
       yield* sql`
@@ -2515,6 +2550,111 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         assert.equal(snapshot.value.page?.hasMore, false);
         assert.equal(snapshot.value.page?.beforeCursor, null);
       }
+    }),
+  );
+
+  it.effect("pages task state without hydrating unrelated histories", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        )
+        VALUES
+          ('task-message-0', 'task-thread', NULL, 'assistant', 'zero', 0,
+            '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'),
+          ('task-message-1', 'task-thread', NULL, 'assistant', 'one', 1,
+            '2026-06-01T00:00:01.000Z', '2026-06-01T00:00:01.500Z'),
+          ('task-message-2', 'task-thread', NULL, 'assistant', 'two', 0,
+            '2026-06-01T00:00:02.000Z', '2026-06-01T00:00:02.000Z')
+      `;
+
+      yield* Effect.forEach(
+        Array.from({ length: 502 }, (_, index) => index),
+        (index) => {
+          const kind =
+            index === 0
+              ? "context-compaction"
+              : index === 501
+                ? "context-window.updated"
+                : "tool.completed";
+          const payload =
+            index === 501
+              ? encodeUnknownJson({
+                  usedTokens: 80,
+                  totalProcessedTokens: 80,
+                  maxTokens: 100,
+                  compactsAutomatically: true,
+                })
+              : "{}";
+          const createdAt = `2026-06-01T00:00:00.${String(index).padStart(3, "0")}Z`;
+          return sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary,
+              payload_json, sequence, created_at
+            )
+            VALUES (
+              ${`task-activity-${index}`}, 'task-thread', NULL, 'info', ${kind}, ${kind},
+              ${payload}, ${index}, ${createdAt}
+            )
+          `;
+        },
+        { discard: true },
+      );
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary,
+          payload_json, sequence, created_at
+        )
+        VALUES (
+          'task-activity-invalid-usage', 'task-thread', NULL, 'info',
+          'context-window.updated', 'Invalid newer context usage',
+          '{"usedTokens":"invalid"}', 502, '2026-06-01T00:00:00.502Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary,
+          payload_json, sequence, created_at
+        )
+        VALUES (
+          'unrelated-large-activity', 'unrelated-thread', NULL, 'tool', 'tool.completed',
+          'Large unrelated payload', ${encodeUnknownJson({ blob: "x".repeat(1_000_000) })},
+          0, '2026-06-01T00:00:00.000Z'
+        )
+      `;
+
+      const context = yield* snapshotQuery.getThreadTaskContext(ThreadId.make("task-thread"), 1);
+      assert.equal(context.messageAtCursor?.id, asMessageId("task-message-1"));
+      assert.equal(context.messageAtCursor?.streaming, true);
+      assert.equal(context.latestTokenUsage?.usedTokens, 80);
+      assert.equal(context.compacted, true);
+
+      const page = yield* snapshotQuery.getThreadTaskPage(ThreadId.make("task-thread"), {
+        messageOffset: 1,
+        messageLimit: 1,
+        activityOffset: 500,
+        activityLimit: 2,
+      });
+      assert.deepEqual(
+        page.messages.map((message) => message.id),
+        [asMessageId("task-message-1")],
+      );
+      assert.deepEqual(
+        page.activities.map((activity) => activity.id),
+        [asEventId("task-activity-500"), asEventId("task-activity-501")],
+      );
+      assert.equal(page.messageCount, 3);
+      assert.equal(page.activityCount, 503);
+      assert.equal(page.latestTokenUsage?.maxTokens, 100);
+      assert.equal(page.compacted, true);
     }),
   );
 });

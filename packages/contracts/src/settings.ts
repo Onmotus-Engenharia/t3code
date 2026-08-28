@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -576,6 +576,13 @@ export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyle
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
+/**
+ * Server-owned recovery for a provider turn interrupted by a server restart.
+ * The retry state itself lives with the persisted provider session binding so
+ * every connected client observes one authoritative attempt stream.
+ */
+export const DEFAULT_AUTOMATIC_CONTINUATION_RETRY_COOLDOWN = Duration.seconds(30);
+export const DEFAULT_AUTOMATIC_CONTINUATION_MAX_CONSECUTIVE_ATTEMPTS = 10;
 
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",
@@ -624,6 +631,19 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  automaticContinuationEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  automaticContinuationRetryCooldown: Schema.DurationFromMillis.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(Duration.toMillis(DEFAULT_AUTOMATIC_CONTINUATION_RETRY_COOLDOWN)),
+    ),
+  ),
+  automaticContinuationMaxConsecutiveAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_AUTOMATIC_CONTINUATION_MAX_CONSECUTIVE_ATTEMPTS),
+    ),
+  ),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `t3-code` server (and with it every
@@ -849,6 +869,9 @@ export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
+  automaticContinuationEnabled: Schema.optionalKey(Schema.Boolean),
+  automaticContinuationRetryCooldown: Schema.optionalKey(Schema.DurationFromMillis),
+  automaticContinuationMaxConsecutiveAttempts: Schema.optionalKey(PositiveInt),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({

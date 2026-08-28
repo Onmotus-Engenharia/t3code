@@ -210,7 +210,9 @@ describe("ProviderSessionReaper", () => {
           getShellSnapshot: () => Effect.die("unused"),
           getArchivedShellSnapshot: () => Effect.die("unused"),
           getSnapshotSequence: () =>
-            Effect.succeed({ snapshotSequence: input.readModel.snapshotSequence }),
+            Effect.succeed({
+              snapshotSequence: input.readModel.snapshotSequence,
+            }),
           getCounts: () => Effect.die("unused"),
           getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
           getProjectShellById: () => Effect.die("unused"),
@@ -223,6 +225,8 @@ describe("ProviderSessionReaper", () => {
                 ? Option.some(input.readModel.threads.find((thread) => thread.id === threadId)!)
                 : Option.none(),
             ),
+          getThreadTaskContext: () => Effect.die("unused"),
+          getThreadTaskPage: () => Effect.die("unused"),
           getThreadDetailById: () => Effect.die("unused"),
           getThreadDetailSnapshot: () => Effect.die("unused"),
           searchThreads: () => Effect.succeed({ matches: [] }),

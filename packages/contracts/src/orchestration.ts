@@ -867,6 +867,13 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+/**
+ * The visible user message used to continue a recovered provider session.
+ * Kept in contracts so server-owned recovery and clients share one value
+ * without either surface importing the other.
+ */
+export const THREAD_CONTINUATION_MESSAGE = "Continue.";
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,

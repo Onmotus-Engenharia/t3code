@@ -90,4 +90,19 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("finds automatic continuation controls in General settings", () => {
+    expect(searchSettings("automatic continuation").map((item) => item.id)).toEqual([
+      "automatic-continuation-cooldown",
+      "automatic-continuation-max-attempts",
+    ]);
+    expect(searchSettings("continue interrupted")[0]).toMatchObject({
+      id: "automatic-continuation",
+      to: "/settings/general",
+    });
+    expect(searchSettings("retry cooldown")[0]).toMatchObject({
+      id: "automatic-continuation-cooldown",
+      to: "/settings/general",
+    });
+  });
 });

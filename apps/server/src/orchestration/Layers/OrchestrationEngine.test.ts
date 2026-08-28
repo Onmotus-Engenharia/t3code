@@ -199,7 +199,9 @@ describe("OrchestrationEngine", () => {
               updatedAt: projectionSnapshot.updatedAt,
             }),
           getSnapshotSequence: () =>
-            Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
+            Effect.succeed({
+              snapshotSequence: projectionSnapshot.snapshotSequence,
+            }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
@@ -207,6 +209,8 @@ describe("OrchestrationEngine", () => {
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadTaskContext: () => Effect.die("unused"),
+          getThreadTaskPage: () => Effect.die("unused"),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           searchThreads: () => Effect.succeed({ matches: [] }),
@@ -1427,7 +1431,10 @@ describe("OrchestrationEngine", () => {
       (event) => event.commandId === "cmd-no-origin-project-create",
     );
 
-    expect(withOrigin?.metadata.origin).toEqual({ surface: "mobile", appVersion: "1.2.3" });
+    expect(withOrigin?.metadata.origin).toEqual({
+      surface: "mobile",
+      appVersion: "1.2.3",
+    });
     expect(withoutOrigin?.metadata.origin).toBeUndefined();
 
     await system.dispose();

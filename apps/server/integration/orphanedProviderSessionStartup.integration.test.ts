@@ -4,6 +4,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EnvironmentId,
   MessageId,
+  type OrchestrationEvent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -276,6 +277,12 @@ it.effect(
             AND turn_id IS NULL
             AND state = 'pending'
         `;
+        const events = yield* Stream.runCollect(engine.readEvents(0)).pipe(
+          Effect.map((chunk) => Array.from(chunk) as ReadonlyArray<OrchestrationEvent>),
+        );
+        const automaticContinuationMessageCount = events.filter(
+          (event) => event.type === "thread.message-sent" && event.payload.text === "Continue.",
+        ).length;
         const settleExit = yield* Effect.exit(
           engine.dispatch({
             type: "thread.settle",
@@ -317,6 +324,7 @@ it.effect(
           activeTurnId: restartedThread.session?.activeTurnId,
           latestTurn: restartedThread.latestTurn,
           pendingTurnCount: pendingRows.length,
+          automaticContinuationMessageCount,
           settleSucceeded: Exit.isSuccess(settleExit),
           snoozeSucceeded: Exit.isSuccess(snoozeExit),
           newTurnSucceeded: Exit.isSuccess(newTurnExit),
@@ -334,19 +342,33 @@ it.effect(
         sessionStatus: "error",
         activeTurnId: null,
         latestTurn: null,
-        pendingTurnCount: 0,
+        pendingTurnCount: 2,
+        automaticContinuationMessageCount: 2,
         settleSucceeded: true,
         snoozeSucceeded: true,
         newTurnSucceeded: true,
         bindingStatus: "stopped",
         resumeCursor,
-        runtimePayload: { activeTurnId: null, unrelated: "preserve-me" },
+        runtimePayload: {
+          activeTurnId: null,
+          unrelated: "preserve-me",
+          automaticContinuation: {
+            source: "restart-orphaned-provider-session",
+            consecutiveAttempts: 1,
+            lastAttemptedAt: "1970-01-01T00:00:00.000Z",
+          },
+        },
         stoppedBindingSessionStatus: "error",
         stoppedBindingStatus: "stopped",
         stoppedBindingResumeCursor,
         stoppedBindingRuntimePayload: {
           activeTurnId: null,
           unrelated: "also-preserve-me",
+          automaticContinuation: {
+            source: "restart-orphaned-provider-session",
+            consecutiveAttempts: 1,
+            lastAttemptedAt: "1970-01-01T00:00:00.000Z",
+          },
         },
       });
     }).pipe(

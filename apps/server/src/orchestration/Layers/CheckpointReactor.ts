@@ -35,7 +35,10 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionThreadCheckpointContext,
+} from "../Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
@@ -189,8 +192,14 @@ const make = Effect.gen(function* () {
   // a git repository.
   const resolveCheckpointCwd = Effect.fn("resolveCheckpointCwd")(function* (input: {
     readonly threadId: ThreadId;
-    readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
-    readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
+    readonly thread: {
+      readonly projectId: ProjectId;
+      readonly worktreePath: string | null;
+    };
+    readonly projects: ReadonlyArray<{
+      readonly id: ProjectId;
+      readonly workspaceRoot: string;
+    }>;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined> {
     const fromSession = yield* resolveSessionRuntimeForThread(input.threadId);
@@ -223,29 +232,58 @@ const make = Effect.gen(function* () {
     readonly rootThreadId: ThreadId;
     readonly rootTurnId: TurnId;
   }) {
-    const snapshot = yield* projectionSnapshotQuery.getSnapshot();
+    const snapshot = yield* projectionSnapshotQuery.getCommandReadModel();
+    const candidateThreads = snapshot.threads.filter((thread) => {
+      const relation = thread.taskRelation;
+      return (
+        relation !== null &&
+        relation.rootThreadId === input.rootThreadId &&
+        relation.rootTurnId === input.rootTurnId &&
+        relation.workspaceMode === "isolated"
+      );
+    });
+    const checkpointContexts = new Map<ThreadId, ProjectionThreadCheckpointContext>();
+    yield* Effect.forEach(
+      candidateThreads,
+      (thread) =>
+        projectionSnapshotQuery.getThreadCheckpointContext(thread.id).pipe(
+          Effect.tap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (context) =>
+                Effect.sync(() => {
+                  checkpointContexts.set(thread.id, context);
+                }),
+            }),
+          ),
+        ),
+      { concurrency: 4, discard: true },
+    );
     const sources = selectOrchestratedCheckpointSources({
       rootThreadId: input.rootThreadId,
       rootTurnId: input.rootTurnId,
-      threads: snapshot.threads,
+      threads: candidateThreads.map((thread) => ({
+        id: thread.id,
+        taskRelation: thread.taskRelation,
+        checkpoints: checkpointContexts.get(thread.id)?.checkpoints ?? [],
+      })),
     });
 
     return yield* Effect.forEach(
       sources,
       (source) =>
         Effect.gen(function* () {
-          const thread = snapshot.threads.find((entry) => entry.id === source.threadId);
-          const targetCheckpoint = thread?.checkpoints.find(
+          const context = checkpointContexts.get(source.threadId);
+          const targetCheckpoint = context?.checkpoints.find(
             (checkpoint) => checkpoint.checkpointTurnCount === source.toTurnCount,
           );
-          if (thread === undefined || targetCheckpoint === undefined) {
+          if (context === undefined || targetCheckpoint === undefined) {
             return [];
           }
-          const projects = snapshot.projects.filter((project) => project.id === thread.projectId);
           const cwd = yield* resolveCheckpointCwd({
-            threadId: thread.id,
-            thread,
-            projects,
+            threadId: context.threadId,
+            thread: context,
+            projects: [{ id: context.projectId, workspaceRoot: context.workspaceRoot }],
             preferSessionRuntime: false,
           });
           if (cwd === undefined) {
@@ -254,7 +292,7 @@ const make = Effect.gen(function* () {
 
           const diff = yield* checkpointStore.diffCheckpoints({
             cwd,
-            fromCheckpointRef: checkpointRefForThreadTurn(thread.id, source.fromTurnCount),
+            fromCheckpointRef: checkpointRefForThreadTurn(context.threadId, source.fromTurnCount),
             toCheckpointRef: targetCheckpoint.checkpointRef,
             fallbackFromToHead: false,
             ignoreWhitespace: false,

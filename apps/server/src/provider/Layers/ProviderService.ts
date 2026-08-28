@@ -59,6 +59,7 @@ import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { automaticContinuationRetryPayload } from "../automaticContinuation.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -290,7 +291,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
           : Effect.void,
       ),
-      Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
+      Effect.tap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
+      Effect.tap((canonicalEvent) =>
+        canonicalEvent.type === "turn.completed" && canonicalEvent.payload.state === "completed"
+          ? directory.getBinding(canonicalEvent.threadId).pipe(
+              Effect.flatMap((binding) =>
+                Option.isNone(binding)
+                  ? Effect.void
+                  : directory.upsert({
+                      ...binding.value,
+                      runtimePayload: automaticContinuationRetryPayload(undefined),
+                    }),
+              ),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("failed to reset automatic continuation retry state", {
+                  threadId: canonicalEvent.threadId,
+                  eventId: canonicalEvent.eventId,
+                  cause,
+                }),
+              ),
+              // Retry state is durable but must never hold up the runtime
+              // event stream. The scoped fiber ends with this service.
+              Effect.forkScoped,
+              Effect.asVoid,
+            )
+          : Effect.void,
+      ),
       Effect.asVoid,
     );
 

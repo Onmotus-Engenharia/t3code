@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  THREAD_CONTINUATION_MESSAGE,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -127,6 +128,7 @@ import {
   formatDiagnosticsDescription,
   getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
+  hasChangedAutomaticContinuationSettings,
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
@@ -471,6 +473,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
+  const isAutomaticContinuationDirty = hasChangedAutomaticContinuationSettings(settings);
 
   const changedSettingLabels = useMemo(
     () => [
@@ -515,6 +518,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
+      ...(isAutomaticContinuationDirty ? ["Automatic continuation"] : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -544,6 +548,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
+      isAutomaticContinuationDirty,
       settings.browserDefaultViewport,
       settings.browserDefaultZoomFactor,
       settings.browserDefaultAppearance,
@@ -656,6 +661,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      automaticContinuationEnabled: DEFAULT_UNIFIED_SETTINGS.automaticContinuationEnabled,
+      automaticContinuationRetryCooldown:
+        DEFAULT_UNIFIED_SETTINGS.automaticContinuationRetryCooldown,
+      automaticContinuationMaxConsecutiveAttempts:
+        DEFAULT_UNIFIED_SETTINGS.automaticContinuationMaxConsecutiveAttempts,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2099,6 +2109,129 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Check provider versions"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("automatic-continuation")}
+          description={`After an eligible restart, immediately sends “${THREAD_CONTINUATION_MESSAGE}” to resume work. Later restart recoveries use the retry cooldown.`}
+          resetAction={
+            settings.automaticContinuationEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.automaticContinuationEnabled ? (
+              <SettingResetButton
+                label="automatic continuation"
+                onClick={() =>
+                  updateSettings({
+                    automaticContinuationEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.automaticContinuationEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.automaticContinuationEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ automaticContinuationEnabled: Boolean(checked) })
+              }
+              aria-label="Automatically continue interrupted threads"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("automatic-continuation-cooldown")}
+          aria-disabled={!settings.automaticContinuationEnabled || undefined}
+          className={
+            settings.automaticContinuationEnabled ? "sm:pl-9" : "bg-muted/20 opacity-60 sm:pl-9"
+          }
+          description="Wait between repeated restart recoveries. The first recovery is always immediate."
+          resetAction={
+            !Equal.equals(
+              settings.automaticContinuationRetryCooldown,
+              DEFAULT_UNIFIED_SETTINGS.automaticContinuationRetryCooldown,
+            ) ? (
+              <SettingResetButton
+                label="automatic continuation retry cooldown"
+                onClick={() =>
+                  updateSettings({
+                    automaticContinuationRetryCooldown:
+                      DEFAULT_UNIFIED_SETTINGS.automaticContinuationRetryCooldown,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex shrink-0 items-center gap-2">
+              <NumberField
+                value={durationToSeconds(settings.automaticContinuationRetryCooldown)}
+                min={0}
+                step={5}
+                size="sm"
+                className="w-32"
+                disabled={!settings.automaticContinuationEnabled}
+                onValueChange={(value) =>
+                  updateSettings({
+                    automaticContinuationRetryCooldown: Duration.seconds(
+                      normalizeIntervalSeconds(value),
+                    ),
+                  })
+                }
+              >
+                <NumberFieldGroup>
+                  <NumberFieldDecrement aria-label="Decrease automatic continuation retry cooldown" />
+                  <NumberFieldInput aria-label="Automatic continuation retry cooldown in seconds" />
+                  <NumberFieldIncrement aria-label="Increase automatic continuation retry cooldown" />
+                </NumberFieldGroup>
+              </NumberField>
+              <span className="text-xs text-muted-foreground">seconds</span>
+            </div>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("automatic-continuation-max-attempts")}
+          aria-disabled={!settings.automaticContinuationEnabled || undefined}
+          className={
+            settings.automaticContinuationEnabled ? "sm:pl-9" : "bg-muted/20 opacity-60 sm:pl-9"
+          }
+          description="Stop automatic recovery after this many consecutive attempts; use the warning to continue manually."
+          resetAction={
+            settings.automaticContinuationMaxConsecutiveAttempts !==
+            DEFAULT_UNIFIED_SETTINGS.automaticContinuationMaxConsecutiveAttempts ? (
+              <SettingResetButton
+                label="maximum automatic continuation attempts"
+                onClick={() =>
+                  updateSettings({
+                    automaticContinuationMaxConsecutiveAttempts:
+                      DEFAULT_UNIFIED_SETTINGS.automaticContinuationMaxConsecutiveAttempts,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <NumberField
+              value={settings.automaticContinuationMaxConsecutiveAttempts}
+              min={1}
+              step={1}
+              size="sm"
+              className="w-32"
+              disabled={!settings.automaticContinuationEnabled}
+              onValueChange={(value) =>
+                updateSettings({
+                  automaticContinuationMaxConsecutiveAttempts: normalizeIntervalSeconds(value, 1),
+                })
+              }
+            >
+              <NumberFieldGroup>
+                <NumberFieldDecrement aria-label="Decrease maximum automatic continuation attempts" />
+                <NumberFieldInput aria-label="Maximum automatic continuation attempts" />
+                <NumberFieldIncrement aria-label="Increase maximum automatic continuation attempts" />
+              </NumberFieldGroup>
+            </NumberField>
           }
         />
 

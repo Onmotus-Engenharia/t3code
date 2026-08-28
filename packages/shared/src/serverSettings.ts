@@ -130,6 +130,7 @@ export function applyServerSettingsPatch(
   const {
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
+    automaticContinuationRetryCooldown,
     backgroundActivityProfile,
     backgroundActivity,
     ...patchForMerge
@@ -193,6 +194,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
+    ...(automaticContinuationRetryCooldown !== undefined
+      ? { automaticContinuationRetryCooldown }
+      : {}),
   };
   const normalizedBackgroundActivity = normalizeBackgroundActivitySettings(
     nextWithReplacementsBase.backgroundActivity,

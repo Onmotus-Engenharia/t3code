@@ -113,6 +113,8 @@ describe("CheckpointDiffQuery.layer", () => {
                 });
               }),
             getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadTaskContext: () => Effect.die("unused"),
+            getThreadTaskPage: () => Effect.die("unused"),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
             searchThreads: () => Effect.succeed({ matches: [] }),
@@ -207,6 +209,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadTaskContext: () => Effect.die("unused"),
+            getThreadTaskPage: () => Effect.die("unused"),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
             searchThreads: () => Effect.succeed({ matches: [] }),
@@ -309,6 +313,8 @@ describe("CheckpointDiffQuery.layer", () => {
               Effect.succeed(Option.some(threadId === rootThreadId ? rootContext : childContext)),
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadTaskContext: () => Effect.die("unused"),
+            getThreadTaskPage: () => Effect.die("unused"),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
             searchThreads: () => Effect.die("unused"),
@@ -336,7 +342,9 @@ describe("CheckpointDiffQuery.layer", () => {
       const projectId = ProjectId.make("project-default-whitespace");
       const threadId = ThreadId.make("thread-default-whitespace");
       const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
-      const diffCheckpointsCalls: Array<{ readonly ignoreWhitespace: boolean }> = [];
+      const diffCheckpointsCalls: Array<{
+        readonly ignoreWhitespace: boolean;
+      }> = [];
 
       const threadCheckpointContext = makeThreadCheckpointContext({
         projectId,
@@ -380,6 +388,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadTaskContext: () => Effect.die("unused"),
+            getThreadTaskPage: () => Effect.die("unused"),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
             searchThreads: () => Effect.succeed({ matches: [] }),
@@ -449,6 +459,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadTaskContext: () => Effect.die("unused"),
+            getThreadTaskPage: () => Effect.die("unused"),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
             searchThreads: () => Effect.succeed({ matches: [] }),
@@ -503,6 +515,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadCheckpointContext: () => Effect.succeed(Option.none()),
             getFullThreadDiffContext: () => Effect.succeed(Option.none()),
             getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadTaskContext: () => Effect.die("unused"),
+            getThreadTaskPage: () => Effect.die("unused"),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
             searchThreads: () => Effect.succeed({ matches: [] }),

@@ -1,4 +1,10 @@
-import { CommandId, MessageId, ThreadId, type OrchestrationThread } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ThreadId,
+  type OrchestrationReadModel,
+  type OrchestrationThread,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -16,7 +22,7 @@ import { ProjectionSnapshotQuery } from "../../orchestration/Services/Projection
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { T3Tasks } from "../Services/T3Tasks.ts";
 import { type T3TaskToolCall, installT3TaskToolHandler } from "../Services/T3TaskToolBridge.ts";
-import { deriveTaskContextHealth } from "../contextHealth.ts";
+import { deriveTaskContextHealthFromUsage } from "../contextHealth.ts";
 import {
   ToolFailure,
   createLimitForCaller,
@@ -28,8 +34,7 @@ import {
   optionalString,
   ownsThread,
   requiredString,
-  selectOwnedTaskSummaries,
-  taskOutputToken,
+  taskMessageOutputToken,
   taskSummary,
   threadStatus,
 } from "../domain.ts";
@@ -57,7 +62,7 @@ export const makeT3Tasks = Effect.gen(function* () {
     callerThreadId: ThreadId,
     requiresTaskOrchestration: boolean,
   ) {
-    const snapshot = yield* query.getSnapshot();
+    const snapshot = yield* query.getCommandReadModel();
     const caller = snapshot.threads.find((thread) => thread.id === callerThreadId);
     if (!caller || caller.deletedAt !== null || caller.archivedAt !== null) {
       return fail("not_found", `Calling thread '${callerThreadId}' is not active.`);
@@ -142,8 +147,22 @@ export const makeT3Tasks = Effect.gen(function* () {
 
     if (tool === "list") {
       const statusFilter = optionalString(args, "status");
+      const ownedTasks = snapshot.threads.filter(
+        (thread) =>
+          ownsThread(caller, thread) &&
+          thread.deletedAt === null &&
+          (statusFilter === undefined || threadStatus(thread) === statusFilter),
+      );
       return {
-        tasks: selectOwnedTaskSummaries(caller, snapshot.threads, statusFilter),
+        tasks: yield* Effect.forEach(ownedTasks, (thread) =>
+          query
+            .getThreadTaskContext(thread.id)
+            .pipe(
+              Effect.map((context) =>
+                taskSummary(thread, deriveTaskContextHealthFromUsage(context)),
+              ),
+            ),
+        ),
       };
     }
 
@@ -188,20 +207,29 @@ export const makeT3Tasks = Effect.gen(function* () {
                 "invalid_arguments",
                 `'activityLimit' must be between 1 and ${MAX_READ_ACTIVITIES}.`,
               );
+      const page = yield* query.getThreadTaskPage(target.id, {
+        messageOffset: cursor,
+        messageLimit: limit,
+        activityOffset: activityCursor,
+        activityLimit,
+      });
       const selected: Array<OrchestrationThread["messages"][number]> = [];
       let chars = 0;
-      for (const message of target.messages.slice(cursor, cursor + limit)) {
+      for (const message of page.messages) {
         if (selected.length > 0 && chars + message.text.length > MAX_READ_CHARS) break;
-        selected.push({ ...message, text: message.text.slice(0, MAX_READ_CHARS - chars) });
+        selected.push({
+          ...message,
+          text: message.text.slice(0, MAX_READ_CHARS - chars),
+        });
         chars += Math.min(message.text.length, MAX_READ_CHARS - chars);
         if (chars >= MAX_READ_CHARS) break;
       }
       const tail = selected.at(-1);
       const nextCursor =
         tail?.streaming === true ? cursor + selected.length - 1 : cursor + selected.length;
-      const activities = target.activities.slice(activityCursor, activityCursor + activityLimit);
+      const activities = page.activities;
       const nextActivityCursor = activityCursor + activities.length;
-      const contextHealth = deriveTaskContextHealth(target);
+      const contextHealth = deriveTaskContextHealthFromUsage(page);
       return {
         threadId: target.id,
         status: threadStatus(target),
@@ -232,10 +260,10 @@ export const makeT3Tasks = Effect.gen(function* () {
           createdAt: activity.createdAt,
         })),
         nextCursor,
-        outputToken: tail?.streaming === true ? taskOutputToken(target, nextCursor) : null,
-        truncated: nextCursor < target.messages.length,
+        outputToken: tail?.streaming === true ? taskMessageOutputToken(tail) : null,
+        truncated: nextCursor < page.messageCount,
         nextActivityCursor,
-        activitiesTruncated: nextActivityCursor < target.activities.length,
+        activitiesTruncated: nextActivityCursor < page.activityCount,
       };
     }
 
@@ -276,11 +304,14 @@ export const makeT3Tasks = Effect.gen(function* () {
             ? timeoutValue
             : fail("invalid_arguments", `'timeoutSeconds' must be between 0 and 60.`);
 
-      const readStatuses = query.getSnapshot().pipe(
-        Effect.map((current) =>
-          waits.map((wait) => {
+      const readStatusesFrom = Effect.fn("T3Tasks.readWaitStatuses")(function* (
+        current: OrchestrationReadModel,
+      ) {
+        return yield* Effect.forEach(waits, (wait) =>
+          Effect.gen(function* () {
             const target = targetFor(current.threads, wait.threadId);
-            const outputToken = taskOutputToken(target, wait.cursor);
+            const context = yield* query.getThreadTaskContext(target.id, wait.cursor);
+            const outputToken = taskMessageOutputToken(context.messageAtCursor);
             return {
               threadId: wait.threadId,
               status: threadStatus(target),
@@ -290,26 +321,13 @@ export const makeT3Tasks = Effect.gen(function* () {
                 (wait.outputToken === undefined || outputToken !== wait.outputToken),
               nextCursor: wait.cursor,
               outputToken,
-              contextHealth: deriveTaskContextHealth(target),
+              contextHealth: deriveTaskContextHealthFromUsage(context),
             };
           }),
-        ),
-      );
-      const baselineStatuses = waits.map((wait) => {
-        const target = targetFor(snapshot.threads, wait.threadId);
-        const outputToken = taskOutputToken(target, wait.cursor);
-        return {
-          threadId: wait.threadId,
-          status: threadStatus(target),
-          terminal: isTerminal(target),
-          outputChanged:
-            outputToken !== null &&
-            (wait.outputToken === undefined || outputToken !== wait.outputToken),
-          nextCursor: wait.cursor,
-          outputToken,
-          contextHealth: deriveTaskContextHealth(target),
-        };
+        );
       });
+      const readStatuses = query.getCommandReadModel().pipe(Effect.flatMap(readStatusesFrom));
+      const baselineStatuses = yield* readStatusesFrom(snapshot);
       const signals = yield* Queue.unbounded<void>();
       // The request snapshot is the baseline. Subscribe before re-reading so
       // a transition is observed either in that read or by a queued event.
@@ -348,14 +366,15 @@ export const makeT3Tasks = Effect.gen(function* () {
 
     if (tool === "message") {
       const target = ownedTarget(caller, snapshot.threads, requiredString(args, "threadId"));
-      const projectedBeforeDispatch = yield* query.getThreadDetailById(target.id);
-      const freshTarget = Option.getOrUndefined(projectedBeforeDispatch);
-      if (!freshTarget) return fail("not_found", `Task '${target.id}' was not found.`);
+      const projectedBeforeDispatch = yield* query.getCommandReadModel();
+      const freshTarget = ownedTarget(caller, projectedBeforeDispatch.threads, target.id);
       const active =
         freshTarget.latestTurn?.state === "running" ||
         freshTarget.session?.status === "starting" ||
         freshTarget.session?.status === "running";
-      const contextHealth = deriveTaskContextHealth(freshTarget);
+      const contextHealth = deriveTaskContextHealthFromUsage(
+        yield* query.getThreadTaskContext(freshTarget.id),
+      );
       if (!active && !contextHealth.reuseAllowed) {
         return fail(
           "unsafe_reuse",

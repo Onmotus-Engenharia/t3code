@@ -117,6 +117,21 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "automatic-continuation",
+    title: "Automatically continue interrupted threads",
+    to: "/settings/general",
+  },
+  {
+    id: "automatic-continuation-cooldown",
+    title: "Automatic continuation retry cooldown",
+    to: "/settings/general",
+  },
+  {
+    id: "automatic-continuation-max-attempts",
+    title: "Maximum automatic continuation attempts",
+    to: "/settings/general",
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",

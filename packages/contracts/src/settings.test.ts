@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
+import * as Duration from "effect/Duration";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
@@ -290,6 +291,31 @@ describe("ServerSettings worktree defaults", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
+  });
+});
+
+describe("ServerSettings automatic continuation", () => {
+  it("decodes restart recovery defaults for legacy settings files", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.automaticContinuationEnabled).toBe(true);
+    expect(Duration.toMillis(settings.automaticContinuationRetryCooldown)).toBe(30_000);
+    expect(settings.automaticContinuationMaxConsecutiveAttempts).toBe(10);
+  });
+
+  it("validates automatic continuation patches", () => {
+    const patch = decodeServerSettingsPatch({
+      automaticContinuationEnabled: false,
+      automaticContinuationRetryCooldown: 45_000,
+      automaticContinuationMaxConsecutiveAttempts: 3,
+    });
+
+    expect(patch.automaticContinuationEnabled).toBe(false);
+    expect(Duration.toMillis(patch.automaticContinuationRetryCooldown!)).toBe(45_000);
+    expect(patch.automaticContinuationMaxConsecutiveAttempts).toBe(3);
+    expect(() =>
+      decodeServerSettingsPatch({ automaticContinuationMaxConsecutiveAttempts: 0 }),
+    ).toThrow();
   });
 });
 

@@ -16,6 +16,36 @@ export interface TaskContextHealth {
   readonly reason: TaskContextHealthReason;
 }
 
+export interface TaskContextUsage {
+  readonly latestTokenUsage: ThreadTokenUsageSnapshot | null;
+  readonly compacted: boolean;
+}
+
+export const deriveTaskContextHealthFromUsage = (usage: TaskContextUsage): TaskContextHealth => {
+  const usedTokens = usage.latestTokenUsage?.usedTokens ?? null;
+  const maxTokens = usage.latestTokenUsage?.maxTokens ?? null;
+  const usedPercentage =
+    usedTokens !== null && maxTokens !== null
+      ? Math.min(100, (usedTokens / maxTokens) * 100)
+      : null;
+  const reason: TaskContextHealthReason = usage.compacted
+    ? "compacted"
+    : usedPercentage !== null && usedPercentage >= CONTEXT_REUSE_THRESHOLD_PERCENTAGE
+      ? "threshold_reached"
+      : usedPercentage === null
+        ? "unmeasurable"
+        : "safe";
+
+  return {
+    usedTokens,
+    maxTokens,
+    usedPercentage,
+    compacted: usage.compacted,
+    reuseAllowed: reason === "safe",
+    reason,
+  };
+};
+
 /**
  * Derives task reuse safety from persisted projection activities. The backward
  * walk matches the client context-window convention and skips invalid rows.
@@ -35,26 +65,8 @@ export const deriveTaskContextHealth = (thread: OrchestrationThread): TaskContex
     }
   }
 
-  const usedTokens = latestUsage?.usedTokens ?? null;
-  const maxTokens = latestUsage?.maxTokens ?? null;
-  const usedPercentage =
-    usedTokens !== null && maxTokens !== null
-      ? Math.min(100, (usedTokens / maxTokens) * 100)
-      : null;
-  const reason: TaskContextHealthReason = compacted
-    ? "compacted"
-    : usedPercentage !== null && usedPercentage >= CONTEXT_REUSE_THRESHOLD_PERCENTAGE
-      ? "threshold_reached"
-      : usedPercentage === null
-        ? "unmeasurable"
-        : "safe";
-
-  return {
-    usedTokens,
-    maxTokens,
-    usedPercentage,
+  return deriveTaskContextHealthFromUsage({
+    latestTokenUsage: latestUsage,
     compacted,
-    reuseAllowed: reason === "safe",
-    reason,
-  };
+  });
 };

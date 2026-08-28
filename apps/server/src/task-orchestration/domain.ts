@@ -1,6 +1,7 @@
 import {
   ThreadId,
   type ModelSelection,
+  type OrchestrationMessage,
   type OrchestrationThread,
   type ServerProvider,
   type TaskWorkspaceMode,
@@ -156,7 +157,12 @@ export interface TaskWaitState {
 }
 
 export const taskOutputToken = (thread: OrchestrationThread, cursor: number): string | null => {
-  const message = thread.messages[cursor];
+  return taskMessageOutputToken(thread.messages[cursor]);
+};
+
+export const taskMessageOutputToken = (
+  message: OrchestrationMessage | null | undefined,
+): string | null => {
   return message
     ? `${message.id}|${message.updatedAt}|${message.streaming ? "streaming" : "complete"}`
     : null;

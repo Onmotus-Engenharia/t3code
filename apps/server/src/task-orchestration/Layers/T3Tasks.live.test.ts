@@ -4,6 +4,7 @@ import {
   MessageId,
   ProviderInstanceId,
   ThreadId,
+  ThreadTokenUsageSnapshot,
   TurnId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -17,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -95,6 +97,19 @@ const contextHealth = (input: {
       : (input.usedTokens / input.maxTokens) * 100,
 });
 
+const decodeTokenUsage = Schema.decodeUnknownOption(ThreadTokenUsageSnapshot);
+
+const projectedTaskContext = (thread: OrchestrationThread, messageCursor?: number) => {
+  const latestTokenUsageActivity = thread.activities.findLast(
+    (activity) => activity.kind === "context-window.updated",
+  );
+  return {
+    latestTokenUsage: Option.getOrNull(decodeTokenUsage(latestTokenUsageActivity?.payload)),
+    compacted: thread.activities.some((activity) => activity.kind === "context-compaction"),
+    messageAtCursor: messageCursor === undefined ? null : (thread.messages[messageCursor] ?? null),
+  };
+};
+
 effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
   it.effect("steers active direct tasks while preserving ownership and inactive reuse safety", () =>
     Effect.gen(function* () {
@@ -104,7 +119,11 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
         taskOrchestrationEnabled: false,
       } as unknown as OrchestrationThread;
       const child = {
-        ...thread({ id: "child", rootThreadId: "root", parentThreadId: "root" }),
+        ...thread({
+          id: "child",
+          rootThreadId: "root",
+          parentThreadId: "root",
+        }),
         projectId: "project-1",
         taskOrchestrationEnabled: false,
         latestTokenUsage: {
@@ -125,7 +144,11 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
         ],
       } as unknown as OrchestrationThread;
       const grandchild = {
-        ...thread({ id: "grandchild", rootThreadId: "root", parentThreadId: "child" }),
+        ...thread({
+          id: "grandchild",
+          rootThreadId: "root",
+          parentThreadId: "child",
+        }),
         taskOrchestrationEnabled: false,
         taskRelation: {
           parentThreadId: ThreadId.make("child"),
@@ -173,7 +196,10 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             tone: "tool",
             kind: "mcp_tool_call",
             summary: "Read the prior thread result",
-            payload: { tool: "t3_threads.read", arguments: { threadId: "source-thread" } },
+            payload: {
+              tool: "t3_threads.read",
+              arguments: { threadId: "source-thread" },
+            },
             turnId: TurnId.make("unrelated-completed-turn"),
             createdAt: "2026-07-28T00:00:01.000Z",
           },
@@ -200,12 +226,70 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       const events = yield* Queue.unbounded<OrchestrationEvent>();
 
       const query = {
-        getSnapshot: () => Ref.get(snapshotRef),
-        getThreadDetailById: (id: ThreadId) =>
+        getSnapshot: () => Effect.die("T3Tasks must not hydrate the full projection snapshot"),
+        getCommandReadModel: () =>
           Ref.get(snapshotRef).pipe(
-            Effect.map((snapshot) =>
-              Option.fromUndefinedOr(snapshot.threads.find((candidate) => candidate.id === id)),
-            ),
+            Effect.map((snapshot) => ({
+              ...snapshot,
+              threads: snapshot.threads.map((candidate) => ({
+                ...candidate,
+                messages: [],
+                proposedPlans: [],
+                activities: [],
+                checkpoints: [],
+              })),
+            })),
+          ),
+        getThreadTaskContext: (id: ThreadId, messageCursor?: number) =>
+          Ref.get(snapshotRef).pipe(
+            Effect.map((snapshot) => {
+              const target = snapshot.threads.find((candidate) => candidate.id === id);
+              return target === undefined
+                ? {
+                    latestTokenUsage: null,
+                    compacted: false,
+                    messageAtCursor: null,
+                  }
+                : projectedTaskContext(target, messageCursor);
+            }),
+          ),
+        getThreadTaskPage: (
+          id: ThreadId,
+          request: {
+            readonly messageOffset: number;
+            readonly messageLimit: number;
+            readonly activityOffset: number;
+            readonly activityLimit: number;
+          },
+        ) =>
+          Ref.get(snapshotRef).pipe(
+            Effect.map((snapshot) => {
+              const target = snapshot.threads.find((candidate) => candidate.id === id);
+              if (target === undefined) {
+                return {
+                  latestTokenUsage: null,
+                  compacted: false,
+                  messages: [],
+                  activities: [],
+                  messageCount: 0,
+                  activityCount: 0,
+                };
+              }
+              const context = projectedTaskContext(target);
+              return {
+                ...context,
+                messages: target.messages.slice(
+                  request.messageOffset,
+                  request.messageOffset + request.messageLimit,
+                ),
+                activities: target.activities.slice(
+                  request.activityOffset,
+                  request.activityOffset + request.activityLimit,
+                ),
+                messageCount: target.messages.length,
+                activityCount: target.activities.length,
+              };
+            }),
           ),
       } as unknown as ProjectionSnapshotQuery["Service"];
       const engine = {
@@ -326,7 +410,9 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       }));
       const listed = yield* call("list", {});
       NodeAssert.equal(listed.success, true);
-      const listedTasks = body(listed).tasks as Array<{ contextHealth?: unknown }>;
+      const listedTasks = body(listed).tasks as Array<{
+        contextHealth?: unknown;
+      }>;
       NodeAssert.equal(listedTasks.length, 1);
       NodeAssert.deepStrictEqual(
         listedTasks[0]?.contextHealth,
@@ -344,16 +430,25 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
         enabled: true,
       });
       NodeAssert.equal(enabled.success, true);
-      NodeAssert.deepStrictEqual(body(enabled), { threadId: "child", enabled: true });
+      NodeAssert.deepStrictEqual(body(enabled), {
+        threadId: "child",
+        enabled: true,
+      });
       const disabled = yield* call("orchestration", {
         threadId: "child",
         enabled: false,
       });
       NodeAssert.equal(disabled.success, true);
-      NodeAssert.deepStrictEqual(body(disabled), { threadId: "child", enabled: false });
+      NodeAssert.deepStrictEqual(body(disabled), {
+        threadId: "child",
+        enabled: false,
+      });
 
       for (const threadId of ["grandchild", "unrelated"]) {
-        const rejected = yield* call("orchestration", { threadId, enabled: true });
+        const rejected = yield* call("orchestration", {
+          threadId,
+          enabled: true,
+        });
         NodeAssert.equal(rejected.success, false);
         NodeAssert.equal((body(rejected).error as { code?: string }).code, "ownership_denied");
       }
@@ -363,7 +458,9 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
           candidate.id === "child" ? { ...candidate, taskOrchestrationEnabled: true } : candidate,
         ),
       }));
-      const rootGrandchildRead = yield* call("read", { threadId: "grandchild" });
+      const rootGrandchildRead = yield* call("read", {
+        threadId: "grandchild",
+      });
       NodeAssert.equal(rootGrandchildRead.success, false);
       NodeAssert.equal(
         (body(rootGrandchildRead).error as { code?: string }).code,
@@ -378,7 +475,9 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
         (body(rootGrandchildMessage).error as { code?: string }).code,
         "ownership_denied",
       );
-      const childGrandchildRead = yield* callAs("child", "read", { threadId: "grandchild" });
+      const childGrandchildRead = yield* callAs("child", "read", {
+        threadId: "grandchild",
+      });
       NodeAssert.equal(childGrandchildRead.success, true);
       NodeAssert.equal(body(childGrandchildRead).threadId, "grandchild");
       const childGrandchildMessage = yield* callAs("child", "message", {
@@ -395,7 +494,11 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
       NodeAssert.equal(invalidDepth.success, false);
       NodeAssert.equal((body(invalidDepth).error as { code?: string }).code, "depth_limit");
 
-      const read = yield* call("read", { threadId: "child", cursor: 0, limit: 1 });
+      const read = yield* call("read", {
+        threadId: "child",
+        cursor: 0,
+        limit: 1,
+      });
       NodeAssert.equal((body(read).messages as Array<unknown>).length, 1);
       NodeAssert.deepStrictEqual(
         body(read).contextHealth as unknown,
@@ -434,7 +537,11 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             : candidate,
         ),
       }));
-      const completedRead = yield* call("read", { threadId: "child", cursor: 0, limit: 1 });
+      const completedRead = yield* call("read", {
+        threadId: "child",
+        cursor: 0,
+        limit: 1,
+      });
       NodeAssert.equal(body(completedRead).nextCursor, 1);
       NodeAssert.equal(body(completedRead).outputToken, null);
 
@@ -581,7 +688,10 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             : candidate,
         ),
       }));
-      const atLimit = yield* call("message", { threadId: "child", message: "at limit" });
+      const atLimit = yield* call("message", {
+        threadId: "child",
+        message: "at limit",
+      });
       NodeAssert.equal(atLimit.success, false);
       NodeAssert.equal((body(atLimit).error as { code?: string }).code, "unsafe_reuse");
       NodeAssert.deepStrictEqual(
@@ -646,7 +756,10 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             : candidate,
         ),
       }));
-      const aboveLimit = yield* call("message", { threadId: "child", message: "above limit" });
+      const aboveLimit = yield* call("message", {
+        threadId: "child",
+        message: "above limit",
+      });
       NodeAssert.equal(aboveLimit.success, false);
       NodeAssert.equal((body(aboveLimit).error as { code?: string }).code, "unsafe_reuse");
       NodeAssert.equal(
@@ -672,7 +785,10 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             : candidate,
         ),
       }));
-      const compacted = yield* call("message", { threadId: "child", message: "compacted" });
+      const compacted = yield* call("message", {
+        threadId: "child",
+        message: "compacted",
+      });
       NodeAssert.equal(compacted.success, false);
       NodeAssert.equal((body(compacted).error as { code?: string }).code, "unsafe_reuse");
       NodeAssert.equal(
@@ -721,7 +837,10 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             : candidate,
         ),
       }));
-      const message = yield* call("message", { threadId: "child", message: "follow up" });
+      const message = yield* call("message", {
+        threadId: "child",
+        message: "follow up",
+      });
       NodeAssert.equal(message.success, true);
       NodeAssert.equal(body(message).turnId, null);
       NodeAssert.equal(body(message).status, "requested");
@@ -766,7 +885,9 @@ effectIt.layer(NodeServices.layer)("T3Tasks live operations", (it) => {
             : candidate,
         ),
       }));
-      const completedAfterUnsafeUsage = yield* call("list", { status: "completed" });
+      const completedAfterUnsafeUsage = yield* call("list", {
+        status: "completed",
+      });
       NodeAssert.equal(
         (body(completedAfterUnsafeUsage).tasks as Array<{ status?: string }>)[0]?.status,
         "completed",

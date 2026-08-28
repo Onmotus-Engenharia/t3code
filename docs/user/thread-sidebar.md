@@ -10,6 +10,20 @@ right-clicking its sidebar row. **Copy thread ID** is a top-level action in this
 Pinned threads still move to **Settled** when they become inactive. Pull-request state does not
 settle a thread in the Orchestrator distribution.
 
+## Recover interrupted threads
+
+If T3 Code restarts while an eligible thread is working, it automatically sends **Continue.** to
+resume that work. This is enabled by default for root threads and subtasks. It does not resume
+deleted, archived, settled, or snoozed threads.
+
+In **Settings** → **General**, you can turn off **Automatically continue interrupted threads**.
+The first recovery starts immediately. If another restart interrupts the recovered work, T3 Code
+waits for the configured retry cooldown before trying again; the default cooldown is 30 seconds.
+You can also set the maximum number of consecutive automatic attempts, which defaults to 10.
+
+When the maximum is reached, T3 Code stops automatic retries and leaves the interrupted-thread
+warning in place so you can recover the thread manually.
+
 When you un-settle a thread, it returns to the top of its active list. In a task tree, a re-entering
 root moves its whole group, while a child or grandchild moves only among its siblings. Its timestamps
 do not change, and ordinary activity on an already-active thread does not reorder it.

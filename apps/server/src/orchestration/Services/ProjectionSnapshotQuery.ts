@@ -9,6 +9,7 @@
 import type {
   CheckpointRef,
   OrchestrationCheckpointSummary,
+  OrchestrationMessage,
   OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
@@ -16,11 +17,13 @@ import type {
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
+  ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -35,6 +38,28 @@ export interface ProjectionSnapshotCounts {
 
 export interface ProjectionSnapshotSequence {
   readonly snapshotSequence: number;
+}
+
+export interface ProjectionThreadTaskContext {
+  readonly latestTokenUsage: ThreadTokenUsageSnapshot | null;
+  readonly compacted: boolean;
+  readonly messageAtCursor: OrchestrationMessage | null;
+}
+
+export interface ProjectionThreadTaskPageRequest {
+  readonly messageOffset: number;
+  readonly messageLimit: number;
+  readonly activityOffset: number;
+  readonly activityLimit: number;
+}
+
+export interface ProjectionThreadTaskPage {
+  readonly latestTokenUsage: ThreadTokenUsageSnapshot | null;
+  readonly compacted: boolean;
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly messageCount: number;
+  readonly activityCount: number;
 }
 
 export interface ProjectionThreadCheckpointContext {
@@ -162,6 +187,24 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadShellById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read the small, frequently refreshed state needed by task list/message/wait
+   * operations without hydrating thread histories.
+   */
+  readonly getThreadTaskContext: (
+    threadId: ThreadId,
+    messageCursor?: number,
+  ) => Effect.Effect<ProjectionThreadTaskContext, ProjectionRepositoryError>;
+
+  /**
+   * Read one task-tool page directly from projection tables. Counts and page
+   * rows are resolved in one transaction so cursor metadata matches the rows.
+   */
+  readonly getThreadTaskPage: (
+    threadId: ThreadId,
+    request: ProjectionThreadTaskPageRequest,
+  ) => Effect.Effect<ProjectionThreadTaskPage, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail snapshot by id.

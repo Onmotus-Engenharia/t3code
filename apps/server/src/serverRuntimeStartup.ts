@@ -2,9 +2,12 @@ import {
   CommandId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  MessageId,
   type ModelSelection,
+  type OrchestrationThread,
   ProjectId,
   ProviderInstanceId,
+  THREAD_CONTINUATION_MESSAGE,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -13,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -36,7 +40,14 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
+import type { ProviderRuntimeBinding } from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import {
+  automaticContinuationRetryDelay,
+  automaticContinuationRetryPayload,
+  nextAutomaticContinuationRetryState,
+  readAutomaticContinuationRetryState,
+} from "./provider/automaticContinuation.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import {
@@ -296,6 +307,99 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
 const ORPHANED_PROVIDER_SESSION_ERROR =
   "Provider session did not survive a server restart. Send a new message to continue.";
 
+const isAutomaticContinuationEligible = (thread: {
+  readonly archivedAt: string | null;
+  readonly deletedAt: string | null;
+  readonly settledOverride: "settled" | "active" | null;
+  readonly snoozedUntil?: string | null | undefined;
+}) =>
+  thread.archivedAt === null &&
+  thread.deletedAt === null &&
+  thread.settledOverride !== "settled" &&
+  thread.snoozedUntil == null;
+
+const hasOrphanedProviderSessionWarning = (thread: OrchestrationThread) =>
+  thread.session?.status === "error" &&
+  thread.session.activeTurnId === null &&
+  thread.session.lastError === ORPHANED_PROVIDER_SESSION_ERROR;
+
+/**
+ * Claims and dispatches one continuation only after its cooldown has elapsed.
+ * A non-null duration means the caller should schedule this exact attempt;
+ * importantly, it has not been claimed yet, so a process restart during the
+ * wait resumes the same cooldown instead of consuming another attempt.
+ */
+const claimAndDispatchAutomaticContinuation = Effect.fn("claimAndDispatchAutomaticContinuation")(
+  function* (input: {
+    readonly thread: OrchestrationThread;
+    readonly binding: ProviderRuntimeBinding;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+    const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const settings = yield* serverSettings.getSettings;
+    if (!settings.automaticContinuationEnabled) {
+      return null;
+    }
+
+    const previousRetryState = readAutomaticContinuationRetryState(input.binding.runtimePayload);
+    if (
+      previousRetryState !== undefined &&
+      previousRetryState.consecutiveAttempts >= settings.automaticContinuationMaxConsecutiveAttempts
+    ) {
+      return null;
+    }
+
+    const attemptedAt = yield* DateTime.now;
+    const delay = automaticContinuationRetryDelay({
+      retryState: previousRetryState,
+      now: attemptedAt,
+      cooldown: settings.automaticContinuationRetryCooldown,
+    });
+    if (delay !== undefined) {
+      return delay;
+    }
+    if (delay === null) {
+      return null;
+    }
+
+    const retryState = nextAutomaticContinuationRetryState({
+      previous: previousRetryState,
+      attemptedAt: DateTime.formatIso(attemptedAt),
+    });
+    // Persist the claim before dispatching the visible continuation. A server
+    // crash in this gap retains the warning and cannot duplicate a provider
+    // turn when the next process reconciles the orphan.
+    yield* directory.upsert({
+      ...input.binding,
+      status: "stopped",
+      runtimePayload: {
+        activeTurnId: null,
+        ...automaticContinuationRetryPayload(retryState),
+      },
+    });
+    const id = yield* crypto.randomUUIDv4;
+    const createdAt = DateTime.formatIso(yield* DateTime.now);
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make(`automatic-continuation:${id}`),
+      threadId: input.thread.id,
+      message: {
+        messageId: MessageId.make(`automatic-continuation:${id}`),
+        role: "user",
+        text: THREAD_CONTINUATION_MESSAGE,
+        attachments: [],
+      },
+      modelSelection: input.thread.modelSelection,
+      runtimeMode: input.thread.runtimeMode,
+      interactionMode: input.thread.interactionMode,
+      createdAt,
+    });
+    return undefined;
+  },
+);
+
 export const reconcileProviderSessions = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
@@ -321,15 +425,17 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     if (session === null) {
       continue;
     }
-    yield* Effect.gen(function* () {
+    const binding = yield* Effect.gen(function* () {
       const binding = yield* directory.getBinding(thread.id);
-      if (Option.isSome(binding)) {
-        yield* directory.upsert({
-          ...binding.value,
-          status: "stopped",
-          runtimePayload: { activeTurnId: null },
-        });
+      if (Option.isNone(binding)) {
+        return undefined;
       }
+      yield* directory.upsert({
+        ...binding.value,
+        status: "stopped",
+        runtimePayload: { activeTurnId: null },
+      });
+      return binding.value;
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause)
@@ -337,11 +443,11 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           : Effect.logWarning("failed to reconcile orphaned provider session directory binding", {
               threadId: thread.id,
               cause,
-            }),
+            }).pipe(Effect.as(undefined)),
       ),
     );
 
-    yield* Effect.gen(function* () {
+    const warningPersisted = yield* Effect.gen(function* () {
       const reconciledAt = DateTime.formatIso(yield* DateTime.now);
       yield* orchestrationEngine.dispatch({
         type: "thread.session.set",
@@ -356,6 +462,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
         },
         createdAt: reconciledAt,
       });
+      return true;
     }).pipe(
       Effect.retry({ times: 1 }),
       Effect.catchCause((cause) =>
@@ -364,9 +471,67 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           : Effect.logWarning("failed to settle orphaned provider session projection", {
               threadId: thread.id,
               cause,
-            }),
+            }).pipe(Effect.as(false)),
       ),
     );
+
+    if (!warningPersisted || binding === undefined || !isAutomaticContinuationEligible(thread)) {
+      continue;
+    }
+
+    const scheduleAfterCooldown = (delay: Duration.Duration) =>
+      Effect.sleep(delay).pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            const currentThread = (yield* query.getCommandReadModel()).threads.find(
+              (candidate) => candidate.id === thread.id,
+            );
+            // A manual recovery or a reverse-state command wins while the
+            // one-shot timer waits. This is a revalidation, not polling.
+            if (
+              currentThread === undefined ||
+              !isAutomaticContinuationEligible(currentThread) ||
+              !hasOrphanedProviderSessionWarning(currentThread)
+            ) {
+              return;
+            }
+            const currentBinding = yield* directory.getBinding(thread.id);
+            if (Option.isNone(currentBinding) || currentBinding.value.status !== "stopped") {
+              return;
+            }
+            yield* claimAndDispatchAutomaticContinuation({
+              thread: currentThread,
+              binding: currentBinding.value,
+            });
+          }),
+        ),
+      );
+
+    const delay = yield* claimAndDispatchAutomaticContinuation({ thread, binding }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("failed to automatically continue orphaned provider session", {
+              threadId: thread.id,
+              cause,
+            }).pipe(Effect.as(null)),
+      ),
+    );
+    if (delay !== undefined && delay !== null) {
+      // One scoped timer per cooled-down orphan. It is cancelled at shutdown;
+      // the next startup reconstructs it from the durable last-attempt time.
+      yield* scheduleAfterCooldown(delay).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("failed to automatically continue orphaned provider session", {
+                threadId: thread.id,
+                cause,
+              }),
+        ),
+        Effect.forkScoped,
+      );
+    }
   }
 }).pipe(
   Effect.catchCause((cause) =>

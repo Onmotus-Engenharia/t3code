@@ -75,6 +75,26 @@ export function hasChangedBackgroundActivitySettings(
   );
 }
 
+export function hasChangedAutomaticContinuationSettings(
+  settings: Pick<
+    UnifiedSettings,
+    | "automaticContinuationEnabled"
+    | "automaticContinuationRetryCooldown"
+    | "automaticContinuationMaxConsecutiveAttempts"
+  >,
+): boolean {
+  return (
+    settings.automaticContinuationEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.automaticContinuationEnabled ||
+    !Equal.equals(
+      settings.automaticContinuationRetryCooldown,
+      DEFAULT_UNIFIED_SETTINGS.automaticContinuationRetryCooldown,
+    ) ||
+    settings.automaticContinuationMaxConsecutiveAttempts !==
+      DEFAULT_UNIFIED_SETTINGS.automaticContinuationMaxConsecutiveAttempts
+  );
+}
+
 type TypographySettings = Pick<
   UnifiedSettings,
   | "fontFamilySans"
