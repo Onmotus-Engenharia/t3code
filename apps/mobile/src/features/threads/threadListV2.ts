@@ -56,6 +56,8 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
 
 export function resolveThreadListV2SwipeActions(input: {
   readonly variant: "card" | "slim";
+  /** Density and lifecycle differ for task descendants. */
+  readonly lifecycle?: ThreadSection;
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
@@ -68,11 +70,9 @@ export function resolveThreadListV2SwipeActions(input: {
   if (input.snoozed === true) {
     return { primary: "unsnooze", secondary: null };
   }
-  const primary = input.settlementSupported
-    ? input.variant === "slim"
-      ? "unsettle"
-      : "settle"
-    : "archive";
+  const settled =
+    input.lifecycle === "settled" || (input.lifecycle === undefined && input.variant === "slim");
+  const primary = input.settlementSupported ? (settled ? "unsettle" : "settle") : "archive";
   return {
     primary,
     secondary: input.snoozeSupported && input.snoozable ? "snooze" : null,
@@ -486,7 +486,6 @@ export function buildThreadListV2Items(input: {
     }
     if (
       supportsSettlement &&
-      !isThreadListV2Pinned(thread) &&
       effectiveSettled(thread, {
         now,
         autoSettleAfterDays,
@@ -507,10 +506,14 @@ export function buildThreadListV2Items(input: {
       firstValidTimestampMs(left.snoozedUntil, left.createdAt) -
       firstValidTimestampMs(right.snoozedUntil, right.createdAt),
   );
+  // A pin survives settlement. Pinned history stays together at the front of
+  // Settled, while ordinary history remains newest-first.
   const orderedSettled = [...sections.settled].sort(
     (left, right) =>
+      Number(isThreadListV2Pinned(right)) - Number(isThreadListV2Pinned(left)) ||
       firstValidTimestampMs(right.latestUserMessageAt, right.updatedAt) -
-      firstValidTimestampMs(left.latestUserMessageAt, left.updatedAt),
+        firstValidTimestampMs(left.latestUserMessageAt, left.updatedAt) ||
+      left.id.localeCompare(right.id),
   );
   const orderedBySection = {
     active: orderedActive,

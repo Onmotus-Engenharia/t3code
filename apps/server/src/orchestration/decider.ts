@@ -598,24 +598,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: alreadySettled ? thread.updatedAt : occurredAt,
         },
       };
-      // Settling is "I'm done with this": clear states that would keep the
-      // row pinned or snoozed instead of showing the new settled state.
+      // Settling spends a snooze return ticket, but pin state is independent:
+      // a pinned thread can remain settled and preserve its arranged position.
       const companionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
-      if (thread.pinnedAt != null) {
-        companionEvents.push({
-          ...(yield* withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt,
-            commandId: command.commandId,
-          })),
-          type: "thread.unpinned" as const,
-          payload: {
-            threadId: command.threadId,
-            updatedAt: occurredAt,
-          },
-        });
-      }
       if (thread.snoozedUntil != null) {
         companionEvents.push({
           ...(yield* withEventBase({
@@ -791,27 +776,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: existingPinnedAt !== null ? thread.updatedAt : occurredAt,
         },
       };
-      // Pinning is a promotion: it clears the parked states rather than
-      // silently outranking them. An explicit settle un-settles (reason
-      // "user", same override the un-settle button stamps), and a snooze's
-      // return ticket is spent — the thread is on top NOW, not on Tuesday.
+      // Pinning spends a snooze return ticket, but it does not alter
+      // settlement: pin state and lifecycle state are independent.
       const promotionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
-      if (thread.settledOverride === "settled") {
-        promotionEvents.push({
-          ...(yield* withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt,
-            commandId: command.commandId,
-          })),
-          type: "thread.unsettled",
-          payload: {
-            threadId: command.threadId,
-            reason: "user",
-            updatedAt: occurredAt,
-          },
-        });
-      }
       if (thread.snoozedUntil != null) {
         promotionEvents.push({
           ...(yield* withEventBase({

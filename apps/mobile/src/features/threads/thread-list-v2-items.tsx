@@ -450,9 +450,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
-  // row can un-settle — explicit settles clear the override, auto-settled
-  // rows get pinned active until real activity clears the pin.
-  const canUnsettle = variant === "slim";
+  // row can un-settle while retaining its pin, then return to its previous
+  // position in the active pinned block.
+  const canUnsettle = props.lifecycle === "settled";
   const [snoozeGateTick, bumpSnoozeGateTick] = useState(0);
   const snoozeGateExpiryMs = props.snoozeSupported
     ? resolveThreadListV2SnoozeGateExpiryMs(thread, { now: new Date().toISOString() })
@@ -465,6 +465,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [snoozeGateExpiryMs, snoozeGateTick]);
   const swipeActions = resolveThreadListV2SwipeActions({
     variant,
+    lifecycle: props.lifecycle,
     settlementSupported: props.settlementSupported,
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: new Date().toISOString() }),
@@ -483,9 +484,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       })),
     [snoozePresets],
   );
-  // Pinned cards keep the full lifecycle menu; only the pin item flips to
-  // Unpin. (Settling a pinned thread clears the pin server-side; snoozing
-  // hides the card until wake with the pin intact.)
+  // Pinned rows keep their lifecycle menu; only the pin item flips to
+  // Unpin. Settlement and snooze preserve the pin underneath.
   const pinMenuItem = useMemo<MenuAction[]>(
     () =>
       props.pinningSupported
@@ -664,26 +664,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     }
     return swipeActions.primary === "unsettle"
       ? {
-          accessibilityLabel: `Wake ${thread.title}`,
-          icon: "sunrise" as const,
-          label: "Wake",
-          onPress: handleUnsnooze,
+          accessibilityLabel: `Un-settle ${thread.title}`,
+          icon: "arrow.uturn.backward" as const,
+          label: "Un-settle",
+          onPress: handleUnsettle,
         }
-      : canUnsettle
-        ? {
-            accessibilityLabel: `Un-settle ${thread.title}`,
-            icon: "arrow.uturn.backward" as const,
-            label: "Un-settle",
-            onPress: handleUnsettle,
-          }
-        : {
-            accessibilityLabel: `Settle ${thread.title}`,
-            icon: "checkmark" as const,
-            label: "Settle",
-            onPress: handleSettle,
-          };
+      : {
+          accessibilityLabel: `Settle ${thread.title}`,
+          icon: "checkmark" as const,
+          label: "Settle",
+          onPress: handleSettle,
+        };
   }, [
-    canUnsettle,
     handleArchive,
     handleSettle,
     handleUnsnooze,

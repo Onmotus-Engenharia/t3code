@@ -140,6 +140,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   pageSidebarTaskTreeGroups,
+  partitionSidebarThreads,
   planPinnedReorder,
   projectVisibleSidebarTaskTreeRows,
   resolveAdjacentThreadId,
@@ -711,13 +712,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   settlementSupported: boolean;
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
-  // Renders the pin glyph. Pinned cards keep the full settle/snooze quick
-  // actions: settling clears the pin server-side, and snoozing hides the
-  // card until wake with the pin intact underneath. The glyph is also the
-  // in-row pin state cue (the pinned block has no header), so it always
-  // shows while pinned; it only becomes a clickable unpin quick-action once
-  // the pinning capability is confirmed, and stays a passive marker while
-  // the descriptor is not loaded. Pinning itself lives in the context menu.
+  // Renders the pin glyph and unpin quick-action wherever a row appears.
+  // A pinned thread can settle or snooze while keeping this metadata, so the
+  // indicator must come from the thread rather than the top pinned section.
   pinningSupported: boolean;
   isPinned: boolean;
   // Present only on pinned cards whose server supports reordering: dnd-kit
@@ -2133,48 +2130,24 @@ export default function Sidebar() {
         (scopedProjectKeys === null ||
           scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
-    const pinned: EnvironmentThreadShell[] = [];
-    const active: EnvironmentThreadShell[] = [];
-    const snoozed: EnvironmentThreadShell[] = [];
-    const settled: EnvironmentThreadShell[] = [];
-    for (const thread of visible) {
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      // Snooze outranks everything, including a pin: "hide until Tuesday"
-      // temporarily suspends "keep on top". The pin survives underneath —
-      // and so does its pinOrderKey, so on wake the thread reappears at
-      // its exact slot in the pinned block. (For unpinned threads
-      // this is also the snooze-beats-auto-settle rule: the wake time is a
-      // stronger statement about when the thread matters again.)
-      if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
-        snoozed.push(thread);
-        // A pin otherwise overrides the lifecycle: pinned threads never
-        // auto-settle out of sight. (The decider clears settled state on
-        // pin and the pin on settle, so pin-vs-settled conflicts only
-        // arise from stale or raced writes.)
-      } else if (thread.pinnedAt != null) {
-        pinned.push(thread);
-      } else if (supportsSettlement && effectiveSettled(thread, { now, autoSettleAfterDays })) {
-        settled.push(thread);
-      } else {
-        active.push(thread);
-      }
-    }
+    const partitions = partitionSidebarThreads({
+      threads: visible,
+      isSnoozed: (thread) =>
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true &&
+        effectiveSnoozed(thread, { now: preciseNow }),
+      isSettled: (thread) =>
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true && effectiveSettled(thread, { now, autoSettleAfterDays }),
+    });
     // One shared rule on every platform (see sortPinnedThreadsByOrderKey):
     // user-arranged keys first, keyless threads in creation order below.
     // Server capability only gates DRAGGING — it must not influence the
     // sort, or mixed-version fleets would render different pinned orders on
     // web and mobile from the same data.
     return {
-      pinnedThreads: sortPinnedThreadsForSidebar(pinned),
+      pinnedThreads: sortPinnedThreadsForSidebar(partitions.pinned),
       reorderablePinnedKeys: new Set(
-        pinned
+        partitions.pinned
           .filter(
             (thread) =>
               serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinReorder ===
@@ -2182,14 +2155,14 @@ export default function Sidebar() {
           )
           .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
       ),
-      activeThreads: sortThreadsForSidebar(active),
+      activeThreads: sortThreadsForSidebar(partitions.active),
       // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: snoozed.toSorted(
+      snoozedThreads: partitions.snoozed.toSorted(
         (left, right) =>
           firstValidTimestampMs(left.snoozedUntil ?? null) -
           firstValidTimestampMs(right.snoozedUntil ?? null),
       ),
-      settledThreads: sortSettledThreadsForSidebar(settled),
+      settledThreads: sortSettledThreadsForSidebar(partitions.settled),
       snoozeNow: preciseNow,
     };
   }, [autoSettleAfterDays, nowMinute, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
@@ -3943,9 +3916,9 @@ export default function Sidebar() {
                           taskChildCount={taskTreeGroup ? taskTreeGroup.rows.length - 1 : 0}
                           taskTreeExpanded={!collapsedTaskRootKeys.has(threadKey)}
                           variant={rowVariant}
-                          // Snoozed rows wake; settled rows un-settle (explicit
-                          // settles clear the override, auto-settled rows get
-                          // pinned active); cards settle.
+                          // Snoozed rows wake; settled rows un-settle; cards
+                          // settle. The server owns whether either lifecycle
+                          // command changes pin metadata.
                           variantAction={
                             section === "snoozed"
                               ? "unsnooze"
@@ -3965,7 +3938,7 @@ export default function Sidebar() {
                             serverConfigs.get(thread.environmentId)?.environment.capabilities
                               .threadPinning === true
                           }
-                          isPinned={section === "pinned"}
+                          isPinned={thread.pinnedAt != null}
                           sortable={sortable}
                           snoozeWakeLabelText={
                             section === "snoozed" && thread.snoozedUntil != null

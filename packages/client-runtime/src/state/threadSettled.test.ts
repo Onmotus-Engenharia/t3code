@@ -330,6 +330,20 @@ describe("effectiveSettled", () => {
     expect(effectiveSettled(boundary, { now: NOW, autoSettleAfterDays: 3 })).toBe(false);
     expect(effectiveSettled(stale, { now: NOW, autoSettleAfterDays: null })).toBe(false);
   });
+
+  it("auto-settles an inactive pinned thread without changing pin metadata", () => {
+    const pinned = {
+      ...makeShell({ activityAt: STALE }),
+      pinnedAt: "2026-04-07T00:00:00.000Z",
+      pinOrderKey: "m",
+    };
+
+    expect(effectiveSettled(pinned, { now: NOW, autoSettleAfterDays: 3 })).toBe(true);
+    expect(pinned).toMatchObject({
+      pinnedAt: "2026-04-07T00:00:00.000Z",
+      pinOrderKey: "m",
+    });
+  });
 });
 
 describe("hasQueuedTurnStart", () => {

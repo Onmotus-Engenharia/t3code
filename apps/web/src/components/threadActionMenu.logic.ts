@@ -136,9 +136,10 @@ export function buildThreadActionMenuItems(
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
         ]
       : []),
-    // Both lifecycle actions stay available on pinned threads: settling
-    // clears the pin ("done" beats "keep on top"), and snoozing hides the
-    // card until wake with the pin intact.
+    // Pin state and lifecycle state are independent client-side. The server
+    // owns any domain transition caused by a command, so a settled pinned
+    // thread offers both Unpin and Un-settle without either menu item
+    // implying the other.
     ...(state.supports.settlement
       ? [
           state.isSettled

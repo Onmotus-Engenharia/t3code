@@ -28,6 +28,7 @@ function makeReadModel(
   messages: OrchestrationThread["messages"] = [],
   lifecycle: {
     readonly pinnedAt?: string | null;
+    readonly pinOrderKey?: string | null;
     readonly snoozedUntil?: string | null;
     readonly snoozedAt?: string | null;
   } = {},
@@ -56,6 +57,7 @@ function makeReadModel(
         snoozedUntil: lifecycle.snoozedUntil ?? null,
         snoozedAt: lifecycle.snoozedAt ?? (lifecycle.snoozedUntil != null ? SETTLED_AT : null),
         pinnedAt: lifecycle.pinnedAt ?? null,
+        pinOrderKey: lifecycle.pinOrderKey ?? null,
         deletedAt: null,
         messages,
         proposedPlans: [],
@@ -167,7 +169,7 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
-  it.effect("settling a pinned and snoozed thread clears the pin and snooze", () =>
+  it.effect("settling a pinned and snoozed thread retains the pin and clears the snooze", () =>
     Effect.gen(function* () {
       const result = yield* decideOrchestrationCommand({
         command: {
@@ -181,11 +183,7 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         }),
       });
       const events = Array.isArray(result) ? result : [result];
-      expect(events.map((entry) => entry.type)).toEqual([
-        "thread.settled",
-        "thread.unpinned",
-        "thread.unsnoozed",
-      ]);
+      expect(events.map((entry) => entry.type)).toEqual(["thread.settled", "thread.unsnoozed"]);
     }),
   );
 
@@ -432,9 +430,12 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
-  it.effect("an accepted un-settle re-anchors the thread for the active list", () =>
+  it.effect("unsettling a pinned thread retains its pinned position", () =>
     Effect.gen(function* () {
-      const readModel = makeReadModel("settled");
+      const readModel = makeReadModel("settled", null, null, [], [], {
+        pinnedAt: SETTLED_AT,
+        pinOrderKey: "g",
+      });
       const result = yield* decideOrchestrationCommand({
         command: {
           type: "thread.unsettle",
@@ -454,6 +455,8 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       } as OrchestrationEvent);
       const thread = projected.threads[0]!;
       expect(thread.settledOverride).toBe("active");
+      expect(thread.pinnedAt).toBe(SETTLED_AT);
+      expect(thread.pinOrderKey).toBe("g");
       expect(thread.unsettledAt).toBe(unsettled.occurredAt);
       if (unsettled.type === "thread.unsettled") {
         expect(thread.unsettledAt).toBe(unsettled.payload.updatedAt);

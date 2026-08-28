@@ -7,8 +7,12 @@ one environment.
 Open the same action menu by clicking the visible chevron beside the active thread title or by
 right-clicking its sidebar row. **Copy thread ID** is a top-level action in this menu.
 
-Pinned threads still move to **Settled** when they become inactive. Pull-request state does not
-settle a thread in the Orchestrator distribution.
+Pinned threads can still move to **Settled**, either when you settle them or when they become
+inactive. They keep their pin, appear at the start of **Settled** before unpinned settled threads,
+and still show the pin control there. Pinning or unpinning a settled thread does not wake it.
+When you un-settle a pinned thread, it returns to its previous position in the pinned active block.
+Snoozing takes precedence: a pinned snoozed thread stays in **Snoozed** until it wakes. Pull-request
+state does not settle a thread in the Orchestrator distribution.
 
 ## Recover interrupted threads
 
@@ -24,9 +28,9 @@ You can also set the maximum number of consecutive automatic attempts, which def
 When the maximum is reached, T3 Code stops automatic retries and leaves the interrupted-thread
 warning in place so you can recover the thread manually.
 
-When you un-settle a thread, it returns to the top of its active list. In a task tree, a re-entering
-root moves its whole group, while a child or grandchild moves only among its siblings. Its timestamps
-do not change, and ordinary activity on an already-active thread does not reorder it.
+When you un-settle an unpinned thread, it returns to the top of its active list. In a task tree, a
+re-entering root moves its whole group, while a child or grandchild moves only among its siblings.
+Its timestamps do not change, and ordinary activity on an already-active thread does not reorder it.
 
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. Right-click the same link and choose **Unlink from thread** to remove it.

@@ -561,6 +561,46 @@ export function sortThreadsForSidebarV2<
 
 export const sortThreadsForSidebar = sortThreadsForSidebarV2;
 
+export interface SidebarThreadPartitions<T> {
+  readonly pinned: readonly T[];
+  readonly active: readonly T[];
+  readonly snoozed: readonly T[];
+  readonly settled: readonly T[];
+}
+
+/**
+ * Applies sidebar lifecycle precedence before the per-section sort. Snooze is
+ * a temporary visibility override; settlement is the next strongest state,
+ * including for threads that retain pin metadata. Only a non-settled,
+ * non-snoozed pin belongs in the top pinned block.
+ */
+export function partitionSidebarThreads<
+  T extends { readonly pinnedAt?: string | null | undefined },
+>(input: {
+  readonly threads: readonly T[];
+  readonly isSnoozed: (thread: T) => boolean;
+  readonly isSettled: (thread: T) => boolean;
+}): SidebarThreadPartitions<T> {
+  const pinned: T[] = [];
+  const active: T[] = [];
+  const snoozed: T[] = [];
+  const settled: T[] = [];
+
+  for (const thread of input.threads) {
+    if (input.isSnoozed(thread)) {
+      snoozed.push(thread);
+    } else if (input.isSettled(thread)) {
+      settled.push(thread);
+    } else if (thread.pinnedAt != null) {
+      pinned.push(thread);
+    } else {
+      active.push(thread);
+    }
+  }
+
+  return { pinned, active, snoozed, settled };
+}
+
 export type SidebarTaskTreeSection = "active" | "snoozed" | "settled";
 
 export interface SidebarTaskTreeRow<T> {

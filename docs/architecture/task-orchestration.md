@@ -165,8 +165,11 @@ permission later, but still remains subject to depth and concurrency limits.
 
 Created tasks arrive through the shell stream, so both sidebars update without refresh. Rows reuse
 normal running/completed/failed/interrupted state presentation and add restrained task and pin
-indicators. Pinned rows sort first within their current lifecycle section. Opening a task uses the
-normal thread route; its header can navigate back to the parent.
+indicators. Pins survive explicit and inactivity settlement: settled pinned rows remain in Settled,
+sort before unpinned settled rows, and retain their pin control. Pin and unpin do not alter
+settlement; un-settling restores a pinned row to its prior active pinned order. Snooze takes
+precedence over both settlement and pin visibility. Opening a task uses the normal thread route;
+its header can navigate back to the parent.
 
 Web/desktop and mobile group task relations into a visual tree under the root thread's lifecycle
 section. Descendants use compact rows while keeping their own settle, un-settle, or wake action.

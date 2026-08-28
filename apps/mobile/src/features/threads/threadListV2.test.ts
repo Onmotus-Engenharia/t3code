@@ -188,6 +188,18 @@ describe("resolveThreadListV2SwipeActions", () => {
     ).toEqual({ primary: "unsettle", secondary: "snooze" });
   });
 
+  it("keeps an active task descendant's slim density from changing its lifecycle action", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "slim",
+        lifecycle: "active",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+      }),
+    ).toEqual({ primary: "settle", secondary: "snooze" });
+  });
+
   it("omits snooze when the server or thread does not allow it", () => {
     expect(
       resolveThreadListV2SwipeActions({
@@ -335,7 +347,7 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(1);
   });
 
-  it("keeps pinned threads in the active block", () => {
+  it("keeps explicitly settled pinned threads in Settled", () => {
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "Active" }),
@@ -352,9 +364,30 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["pinned-settled", "active"]);
-    expect(layout.items.map((item) => item.pinned)).toEqual([true, false]);
-    expect(layout.settledCount).toBe(0);
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "pinned-settled"]);
+    expect(layout.items.map((item) => item.pinned)).toEqual([false, true]);
+    expect(layout.items[1]).toMatchObject({ lifecycle: "settled", variant: "slim" });
+    expect(layout.settledCount).toBe(1);
+  });
+
+  it("preserves settlement when a settled thread is pinned or unpinned", () => {
+    const settled = {
+      id: ThreadId.make("settled"),
+      title: "Settled",
+      settledOverride: "settled" as const,
+      settledAt: NOW,
+    };
+    for (const pinnedAt of [null, "2026-06-01T12:00:00.000Z"]) {
+      const layout = buildThreadListV2Items({
+        threads: [makeThread({ ...settled, pinnedAt })],
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+      });
+
+      expect(layout.items[0]).toMatchObject({ lifecycle: "settled", variant: "slim" });
+      expect(layout.items[0]?.pinned).toBe(pinnedAt !== null);
+    }
   });
 
   it("does not settle pinned threads when their linked pull request merges", () => {
@@ -400,10 +433,39 @@ describe("buildThreadListV2Items", () => {
 
     expect(layout.items[0]).toMatchObject({
       thread: { id: "pinned-inactive" },
-      variant: "card",
+      lifecycle: "settled",
+      variant: "slim",
       pinned: true,
     });
-    expect(layout.settledCount).toBe(0);
+    expect(layout.settledCount).toBe(1);
+  });
+
+  it("places pinned settled rows before newer unpinned settled history", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("newer-unpinned"),
+          title: "Newer unpinned",
+          settledOverride: "settled",
+          settledAt: "2026-06-01T23:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("older-pinned"),
+          title: "Older pinned",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+          settledOverride: "settled",
+          settledAt: "2026-06-01T08:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.lifecycle, item.pinned])).toEqual([
+      ["older-pinned", "settled", true],
+      ["newer-unpinned", "settled", false],
+    ]);
   });
 
   it("keeps canonical pinnedAt state in the pinned block", () => {
@@ -425,6 +487,37 @@ describe("buildThreadListV2Items", () => {
       pinned: true,
     });
     expect(layout.settledCount).toBe(0);
+  });
+
+  it("returns an unsettled pinned thread to its preserved active pin order", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("second"),
+          title: "Second pinned",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+          pinOrderKey: "b",
+          unsettledAt: NOW,
+        }),
+        makeThread({
+          id: ThreadId.make("first"),
+          title: "First pinned",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
+          pinOrderKey: "a",
+          unsettledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.lifecycle])).toEqual([
+      ["first", "active"],
+      ["second", "active"],
+      ["active", "active"],
+    ]);
   });
 
   it("snooze hides a pinned thread and wake restores it to the pinned block", () => {
@@ -935,6 +1028,7 @@ describe("buildThreadListV2Items task tree", () => {
         makeThread({
           id: ThreadId.make("child"),
           title: "child",
+          pinnedAt: "2026-06-01T12:00:00.000Z",
           taskRelation: relation("root", "root", 1),
           settledOverride: "settled",
           settledAt: NOW,
@@ -962,6 +1056,7 @@ describe("buildThreadListV2Items task tree", () => {
       "unsettle",
       "settle",
     ]);
+    expect(layout.items[1]?.pinned).toBe(true);
     expect(threadListV2SettleOrder(layout.items, `${environmentId}:root`)).toEqual([
       `${environmentId}:grandchild`,
       `${environmentId}:child`,

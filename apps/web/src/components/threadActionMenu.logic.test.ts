@@ -45,7 +45,7 @@ describe("buildThreadActionMenuItems", () => {
     expect(allIds(baseState)).not.toContain("copy-branch");
   });
 
-  it("flips lifecycle labels with thread state", () => {
+  it("keeps pin and settlement controls independently available on a settled pinned thread", () => {
     expect(ids({ ...baseState, isPinned: true, isSettled: true, isSnoozed: true })).toEqual(
       expect.arrayContaining(["unpin", "unsettle", "unsnooze"]),
     );

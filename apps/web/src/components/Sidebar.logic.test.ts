@@ -19,6 +19,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   pageSidebarTaskTreeGroups,
+  partitionSidebarThreads,
   projectVisibleSidebarTaskTreeRows,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
@@ -871,6 +872,54 @@ describe("sortThreadsForSidebar", () => {
   });
 });
 
+describe("partitionSidebarThreads", () => {
+  type PartitionThread = {
+    id: string;
+    pinnedAt: string | null;
+  };
+  const thread = (id: string, pinnedAt: string | null = null): PartitionThread => ({
+    id,
+    pinnedAt,
+  });
+
+  it("gives snooze precedence, then settlement, then the active pinned block", () => {
+    const activePinned = thread("active-pinned", "2026-03-09T08:00:00.000Z");
+    const settledPinned = thread("settled-pinned", "2026-03-09T08:00:00.000Z");
+    const snoozedPinned = thread("snoozed-pinned", "2026-03-09T08:00:00.000Z");
+    const active = thread("active");
+    const partitions = partitionSidebarThreads({
+      threads: [activePinned, settledPinned, snoozedPinned, active],
+      isSnoozed: (candidate) => candidate.id === "snoozed-pinned",
+      isSettled: (candidate) =>
+        candidate.id === "settled-pinned" || candidate.id === "snoozed-pinned",
+    });
+
+    expect(partitions.pinned.map((candidate) => candidate.id)).toEqual(["active-pinned"]);
+    expect(partitions.active.map((candidate) => candidate.id)).toEqual(["active"]);
+    expect(partitions.snoozed.map((candidate) => candidate.id)).toEqual(["snoozed-pinned"]);
+    expect(partitions.settled.map((candidate) => candidate.id)).toEqual(["settled-pinned"]);
+  });
+
+  it("returns an unsettled thread with retained pin metadata to the pinned block", () => {
+    const pinned = thread("pinned", "2026-03-09T08:00:00.000Z");
+    const whileSettled = partitionSidebarThreads({
+      threads: [pinned],
+      isSnoozed: () => false,
+      isSettled: () => true,
+    });
+    const afterUnsettle = partitionSidebarThreads({
+      threads: [pinned],
+      isSnoozed: () => false,
+      isSettled: () => false,
+    });
+
+    expect(whileSettled.settled).toEqual([pinned]);
+    expect(whileSettled.pinned).toEqual([]);
+    expect(afterUnsettle.pinned).toEqual([pinned]);
+    expect(afterUnsettle.settled).toEqual([]);
+  });
+});
+
 describe("buildSidebarTaskTree", () => {
   type TaskThread = {
     id: string;
@@ -960,6 +1009,35 @@ describe("buildSidebarTaskTree", () => {
       ["grandchild", 2, "active"],
     ]);
     expect(tree.settled).toEqual([]);
+  });
+
+  it("keeps a settled pinned task in one task-tree row collection", () => {
+    const active = task("active", null);
+    const settledPinned = {
+      ...task("settled-pinned", null),
+      pinnedAt: "2026-03-09T08:00:00.000Z",
+    };
+    const tree = buildSidebarTaskTree({
+      activeThreads: [active],
+      snoozedThreads: [],
+      settledThreads: [settledPinned],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+    const ids = [
+      ...tree.active.flatMap((group) => group.rows.map((row) => row.thread.id)),
+      ...tree.snoozed.flatMap((group) => group.rows.map((row) => row.thread.id)),
+      ...tree.settled.flatMap((group) => group.rows.map((row) => row.thread.id)),
+    ];
+
+    expect(tree.active.flatMap((group) => group.rows.map((row) => row.thread.id))).toEqual([
+      "active",
+    ]);
+    expect(tree.settled.flatMap((group) => group.rows.map((row) => row.thread.id))).toEqual([
+      "settled-pinned",
+    ]);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("visually re-roots an un-nested task and keeps its descendants attached", () => {
