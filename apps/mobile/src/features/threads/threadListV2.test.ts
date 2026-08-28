@@ -273,6 +273,19 @@ describe("sortThreadsForListV2", () => {
     ]);
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
   });
+
+  it("surfaces an un-settled thread at the top via its re-entry stamp", () => {
+    const sorted = sortThreadsForListV2([
+      {
+        id: "old-unsettled",
+        createdAt: "2026-06-01T08:00:00.000Z",
+        unsettledAt: "2026-06-01T13:00:00.000Z",
+      },
+      { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
+      { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["old-unsettled", "newest", "middle"]);
+  });
 });
 
 describe("buildThreadListV2Items", () => {
@@ -857,6 +870,62 @@ describe("buildThreadListV2Items task tree", () => {
     depth,
     workspaceMode: "shared" as const,
     createdBy: "agent" as const,
+  });
+
+  it("keeps re-entry ordering inside root, child, and grandchild task levels", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("root-new"),
+          title: "root-new",
+          createdAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("child-new"),
+          title: "child-new",
+          createdAt: "2026-06-01T12:00:00.000Z",
+          taskRelation: relation("root-old", "root-old", 1),
+        }),
+        makeThread({
+          id: ThreadId.make("root-old"),
+          title: "root-old",
+          createdAt: "2026-06-01T08:00:00.000Z",
+          unsettledAt: "2026-06-01T14:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("grandchild-new"),
+          title: "grandchild-new",
+          createdAt: "2026-06-01T12:00:00.000Z",
+          taskRelation: relation("child-old", "root-old", 2),
+        }),
+        makeThread({
+          id: ThreadId.make("child-old"),
+          title: "child-old",
+          createdAt: "2026-06-01T09:00:00.000Z",
+          unsettledAt: "2026-06-01T15:00:00.000Z",
+          taskRelation: relation("root-old", "root-old", 1),
+        }),
+        makeThread({
+          id: ThreadId.make("grandchild-old"),
+          title: "grandchild-old",
+          createdAt: "2026-06-01T09:00:00.000Z",
+          unsettledAt: "2026-06-01T16:00:00.000Z",
+          taskRelation: relation("child-old", "root-old", 2),
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual([
+      "root-old",
+      "child-old",
+      "grandchild-old",
+      "grandchild-new",
+      "child-new",
+      "root-new",
+    ]);
   });
 
   it("keeps descendants under root lifecycle while preserving own variant", () => {

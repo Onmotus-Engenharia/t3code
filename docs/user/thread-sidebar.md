@@ -10,6 +10,10 @@ right-clicking its sidebar row. **Copy thread ID** is a top-level action in this
 Pinned threads still move to **Settled** when they become inactive. Pull-request state does not
 settle a thread in the Orchestrator distribution.
 
+When you un-settle a thread, it returns to the top of its active list. In a task tree, a re-entering
+root moves its whole group, while a child or grandchild moves only among its siblings. Its timestamps
+do not change, and ordinary activity on an already-active thread does not reorder it.
+
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. Right-click the same link and choose **Unlink from thread** to remove it.
 

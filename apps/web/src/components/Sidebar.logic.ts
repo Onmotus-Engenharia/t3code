@@ -3,6 +3,7 @@ import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
+  activeThreadAnchorTimestampMs,
   getThreadSortTimestamp,
   sortThreads,
   toSortableTimestamp,
@@ -547,12 +548,13 @@ export function sortThreadsForSidebarV2<
     readonly id: string;
     readonly createdAt: string;
     readonly pinnedAt?: string | null | undefined;
+    readonly unsettledAt?: string | null | undefined;
   },
 >(threads: readonly T[]): T[] {
   return [...threads].toSorted(
     (left, right) =>
       Number(right.pinnedAt != null) - Number(left.pinnedAt != null) ||
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
+      activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left) ||
       left.id.localeCompare(right.id),
   );
 }

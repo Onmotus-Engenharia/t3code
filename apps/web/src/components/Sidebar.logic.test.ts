@@ -843,6 +843,20 @@ describe("sortThreadsForSidebar", () => {
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
   });
 
+  it("surfaces an un-settled thread at the top via its re-entry stamp", () => {
+    const sorted = sortThreadsForSidebar([
+      {
+        id: "old-unsettled",
+        createdAt: "2026-03-09T08:00:00.000Z",
+        unsettledAt: "2026-03-09T13:00:00.000Z",
+      },
+      sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
+      sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["old-unsettled", "newest", "middle"]);
+  });
+
   it("keeps pinned threads before newer unpinned threads", () => {
     const sorted = sortThreadsForSidebarV2([
       sortable({ id: "new", createdAt: "2026-03-09T12:00:00.000Z" }),
@@ -862,6 +876,7 @@ describe("buildSidebarTaskTree", () => {
     id: string;
     environmentId: string;
     createdAt: string;
+    unsettledAt?: string | null;
     taskRelation: { parentThreadId: string } | null;
   };
   const task = (
@@ -879,6 +894,51 @@ describe("buildSidebarTaskTree", () => {
     thread.taskRelation === null
       ? null
       : `${thread.environmentId}:${thread.taskRelation.parentThreadId}`;
+
+  it("keeps re-entry ordering inside each task-tree hierarchy", () => {
+    const rootOld = {
+      ...task("root-old", null, "2026-03-09T08:00:00.000Z"),
+      unsettledAt: "2026-03-09T14:00:00.000Z",
+    };
+    const rootNew = task("root-new", null, "2026-03-09T12:00:00.000Z");
+    const childOld = task("child-new", "root-old", "2026-03-09T12:00:00.000Z");
+    const childReentered = {
+      ...task("child-old", "root-old", "2026-03-09T09:00:00.000Z"),
+      unsettledAt: "2026-03-09T15:00:00.000Z",
+    };
+    const grandchildNew = task("grandchild-new", "child-old", "2026-03-09T12:00:00.000Z");
+    const grandchildReentered = {
+      ...task("grandchild-old", "child-old", "2026-03-09T09:00:00.000Z"),
+      unsettledAt: "2026-03-09T16:00:00.000Z",
+    };
+    const tree = buildSidebarTaskTree({
+      activeThreads: sortThreadsForSidebar([
+        rootNew,
+        childOld,
+        rootOld,
+        grandchildNew,
+        childReentered,
+        grandchildReentered,
+      ]),
+      snoozedThreads: [],
+      settledThreads: [],
+      unnestedThreadKeys: new Set(),
+      getThreadKey: key,
+      getParentThreadKey: parentKey,
+    });
+
+    expect(tree.active.map((group) => group.rootThreadKey)).toEqual([
+      "local:root-old",
+      "local:root-new",
+    ]);
+    expect(tree.active[0]?.rows.map((row) => row.thread.id)).toEqual([
+      "root-old",
+      "child-old",
+      "grandchild-old",
+      "grandchild-new",
+      "child-new",
+    ]);
+  });
 
   it("keeps child and grandchild rows under their root across lifecycle sections", () => {
     const root = task("root", null);

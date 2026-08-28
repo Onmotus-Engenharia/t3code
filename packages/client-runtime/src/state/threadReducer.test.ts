@@ -200,6 +200,7 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.settledOverride).toBe("settled");
         expect(result.thread.settledAt).toBe(settledAt);
+        expect(result.thread.unsettledAt).toBeNull();
       }
     });
 
@@ -231,6 +232,34 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.settledOverride).toBe(settledOverride);
         expect(result.thread.settledAt).toBeNull();
+        expect(result.thread.unsettledAt).toBe(updatedAt);
+      }
+    });
+
+    it("preserves an active thread's existing re-entry anchor on activity", () => {
+      const anchoredThread: OrchestrationThread = {
+        ...baseThread,
+        settledOverride: "active",
+        unsettledAt: "2026-04-01T06:00:00.000Z",
+      };
+      const result = applyThreadDetailEvent(anchoredThread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.unsettled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          reason: "activity",
+          updatedAt: "2026-04-01T07:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.settledOverride).toBeNull();
+        expect(result.thread.unsettledAt).toBe("2026-04-01T06:00:00.000Z");
       }
     });
   });

@@ -68,7 +68,7 @@ layer("045_ReconcileForkAndUpstreamThreadSchema", (it) => {
       // after preparing the legacy layout so its one-time update is tested.
       yield* sql`
         DELETE FROM effect_sql_migrations
-        WHERE migration_id = 45
+        WHERE migration_id IN (45, 46)
       `;
 
       yield* runMigrations();

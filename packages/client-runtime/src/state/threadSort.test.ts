@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  activeThreadAnchorTimestampMs,
   planPinnedMove,
   sortPinnedThreadsByOrderKey,
   sortThreads,
@@ -118,6 +119,23 @@ describe("planPinnedMove", () => {
     expect(assignments).not.toBeNull();
     const keys = assignments!.map((entry) => entry.orderKey);
     expect([...keys].sort()).toEqual(keys);
+  });
+});
+
+describe("activeThreadAnchorTimestampMs", () => {
+  it("uses a newer re-entry stamp but never moves before creation", () => {
+    expect(
+      activeThreadAnchorTimestampMs({
+        createdAt: "2026-03-09T10:00:00.000Z",
+        unsettledAt: "2026-03-09T12:00:00.000Z",
+      }),
+    ).toBe(Date.parse("2026-03-09T12:00:00.000Z"));
+    expect(
+      activeThreadAnchorTimestampMs({
+        createdAt: "2026-03-09T10:00:00.000Z",
+        unsettledAt: "2026-03-09T09:00:00.000Z",
+      }),
+    ).toBe(Date.parse("2026-03-09T10:00:00.000Z"));
   });
 });
 
