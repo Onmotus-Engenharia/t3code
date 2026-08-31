@@ -4,7 +4,7 @@ This fork builds **T3 Code Orchestrator** as a separate desktop product. `distri
 single source of truth for collision-prone identity. Keep changes there instead of scattering
 custom names through upstream files.
 
-The current fork release is **`0.0.35-orchestrator.3`**. Its base release is upstream T3 Code
+The current fork release is **`0.0.35-orchestrator.4`**. Its base release is upstream T3 Code
 `0.0.35`; the suffix identifies an Orchestrator build and must remain on every desktop, server,
 web, and contracts package that participates in desktop distribution.
 
@@ -65,11 +65,11 @@ Install dependencies, regenerate/check icons, then build a version with a custom
 ```sh
 vp i
 vp run icons:orchestrator
-vp run dist:desktop:dmg:arm64 --build-version 0.0.35-orchestrator.3
-vp run dist:desktop:dmg:x64 --build-version 0.0.35-orchestrator.3
-vp run dist:desktop:linux --build-version 0.0.35-orchestrator.3
-vp run dist:desktop:win:x64 --build-version 0.0.35-orchestrator.3
-vp run dist:desktop:win:arm64 --build-version 0.0.35-orchestrator.3
+vp run dist:desktop:dmg:arm64 --build-version 0.0.35-orchestrator.4
+vp run dist:desktop:dmg:x64 --build-version 0.0.35-orchestrator.4
+vp run dist:desktop:linux --build-version 0.0.35-orchestrator.4
+vp run dist:desktop:win:x64 --build-version 0.0.35-orchestrator.4
+vp run dist:desktop:win:arm64 --build-version 0.0.35-orchestrator.4
 ```
 
 Run Windows packaging on the matching Windows or approved CI runner. Do not publish or start CI

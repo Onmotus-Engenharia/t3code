@@ -6,6 +6,7 @@ import type {
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
+  ServerProviderSkill,
   ServerProviderState,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -40,6 +41,7 @@ import {
   type CommandResult,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { discoverCursorSkills } from "../Drivers/CursorSkills.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
@@ -68,6 +70,13 @@ const CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE = [
   `See ${CURSOR_CLI_INSTALLATION_DOCS_URL}.`,
   "Check server logs for ACP details.",
 ].join(" ");
+const CURSOR_SLASH_COMMANDS = [
+  {
+    name: "ask",
+    description: "Ask a question without making changes",
+    input: { hint: "Ask a question" },
+  },
+] as const;
 export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
   _meta: {
     parameterizedModelPicker: true,
@@ -627,9 +636,14 @@ export function buildCursorProviderSnapshot(input: {
   readonly cursorSettings: CursorSettings;
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
+  readonly skills?: ReadonlyArray<ServerProviderSkill>;
   readonly discoveryWarning?: string;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
+  const isUsable =
+    input.cursorSettings.enabled &&
+    input.parsed.status === "ready" &&
+    input.parsed.auth.status !== "unauthenticated";
   return buildServerProvider({
     presentation: CURSOR_PRESENTATION,
     enabled: input.cursorSettings.enabled,
@@ -639,6 +653,12 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    ...(isUsable
+      ? {
+          slashCommands: CURSOR_SLASH_COMMANDS,
+          skills: input.skills ?? [],
+        }
+      : {}),
     probe: {
       installed: true,
       version: input.parsed.version,
@@ -1082,6 +1102,10 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
   let discoveredModels = Option.none<ReadonlyArray<ServerProviderModel>>();
   let discoveryWarning: string | undefined;
+  const skills =
+    parsed.status === "ready" && parsed.auth.status !== "unauthenticated"
+      ? yield* discoverCursorSkills(environment).pipe(Effect.orElseSucceed(() => [] as const))
+      : [];
   if (parsed.auth.status !== "unauthenticated") {
     const discoveryExit = yield* Effect.exit(
       discoverCursorModelsViaAcp(cursorSettings, environment).pipe(
@@ -1109,6 +1133,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       Option.filter(discoveredModels, (models) => models.length > 0),
       () => [] as const,
     ),
+    skills,
     ...(discoveryWarning ? { discoveryWarning } : {}),
   });
 });

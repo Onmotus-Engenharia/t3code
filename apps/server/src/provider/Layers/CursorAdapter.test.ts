@@ -20,6 +20,7 @@ import {
   ApprovalRequestId,
   CursorSettings,
   ProviderDriverKind,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProviderRuntimeEvent,
   ThreadId,
   ProviderInstanceId,
@@ -28,7 +29,13 @@ import {
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
-import { makeCursorAdapter } from "./CursorAdapter.ts";
+import {
+  buildCursorExpandedPrompt,
+  collectExplicitCursorSkillNames,
+  findCursorAskMode,
+  makeCursorAdapter,
+  parseCursorAskCommand,
+} from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
@@ -64,6 +71,7 @@ async function makeProbeWrapper(
   requestLogPath: string,
   argvLogPath: string,
   extraEnv?: Record<string, string>,
+  agentPath = mockAgentPath,
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-probe-"));
   const wrapperPath = NodePath.join(dir, "fake-agent.sh");
@@ -75,7 +83,7 @@ printf '%s\t' "$@" >> ${JSON.stringify(argvLogPath)}
 printf '\n' >> ${JSON.stringify(argvLogPath)}
 export T3_ACP_REQUEST_LOG_PATH=${JSON.stringify(requestLogPath)}
 ${envExports}
-exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
+exec ${JSON.stringify(mockAgentCommand)} ${[agentPath].map((arg) => JSON.stringify(arg)).join(" ")} "$@"
 `;
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
   await NodeFSP.chmod(wrapperPath, 0o755);
@@ -166,6 +174,43 @@ const cursorAdapterTestLayer = it.layer(
     Layer.provideMerge(NodeServices.layer),
   ),
 );
+
+it("recognizes only a complete /ask command and discovers an advertised native Ask mode", () => {
+  assert.deepEqual(parseCursorAskCommand(" /ask explain this "), { question: "explain this" });
+  assert.isUndefined(parseCursorAskCommand("/asking explain this"));
+  assert.isUndefined(parseCursorAskCommand("please /ask explain this"));
+  assert.deepEqual(
+    findCursorAskMode({
+      currentModeId: "code",
+      availableModes: [
+        { id: "code", name: "Code" },
+        { id: "question", name: "Ask" },
+      ],
+    }),
+    { id: "question", name: "Ask" },
+  );
+});
+
+it("keeps the original request outbound and rejects oversized Cursor-only expansions", () => {
+  assert.deepEqual(collectExplicitCursorSkillNames("Please $review $review"), ["review", "review"]);
+  assert.deepEqual(buildCursorExpandedPrompt({ skills: [], request: "Please $review" }), {
+    kind: "ready",
+    text: "Please $review",
+  });
+  assert.deepEqual(
+    buildCursorExpandedPrompt({
+      skills: [
+        {
+          name: "review",
+          source: "C:/skills/review/SKILL.md",
+          content: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+        },
+      ],
+      request: "review this",
+    }),
+    { kind: "too-large" },
+  );
+});
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
@@ -479,6 +524,220 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             (modeRequest?.params as Record<string, unknown> | undefined)?.value,
         ),
       );
+    }),
+  );
+
+  it.effect("uses Cursor's native Ask mode for one /ask turn and resets it on the next turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-native-ask-mode");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "/ask explain this code", attachments: [] });
+      yield* adapter.sendTurn({ threadId, input: "implement the change", attachments: [] });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const prompts = requests.filter((entry) => entry.method === "session/prompt");
+      assert.lengthOf(prompts, 2);
+      const firstPrompt = prompts[0]?.params as Record<string, unknown> | undefined;
+      const firstPromptParts = firstPrompt?.prompt as Array<Record<string, unknown>> | undefined;
+      assert.equal(firstPromptParts?.[0]?.text, "explain this code");
+
+      const modeValues = requests.flatMap((entry) => {
+        if (entry.method === "session/set_mode") {
+          const params = entry.params as Record<string, unknown> | undefined;
+          return typeof params?.modeId === "string" ? [params.modeId] : [];
+        }
+        if (
+          entry.method === "session/set_config_option" &&
+          (entry.params as Record<string, unknown> | undefined)?.configId === "mode"
+        ) {
+          const params = entry.params as Record<string, unknown> | undefined;
+          return typeof params?.value === "string" ? [params.value] : [];
+        }
+        return [];
+      });
+      assert.include(modeValues, "ask");
+      assert.equal(modeValues[modeValues.length - 1], "code");
+    }),
+  );
+
+  it.effect("rejects /ask without a question before prompting Cursor", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-empty-ask-mode");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      const result = yield* adapter
+        .sendTurn({ threadId, input: "/ask", attachments: [] })
+        .pipe(Effect.result);
+      yield* adapter.stopSession(threadId);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterValidationError");
+        assert.include(result.failure.message, "Usage: /ask <question>");
+      }
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.equal(requests.filter((entry) => entry.method === "session/prompt").length, 0);
+    }),
+  );
+
+  it.effect("inlines the askmode fallback when Cursor does not advertise Ask mode", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("cursor-fallback-askmode");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-fallback-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      const userProfile = NodePath.join(tempDir, "profile");
+      const fallbackPath = NodePath.join(userProfile, ".codex", "skills", "askmode", "SKILL.md");
+      const noAskAgentPath = NodePath.join(tempDir, "no-ask-agent.ts");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(fallbackPath), { recursive: true });
+        await NodeFSP.writeFile(fallbackPath, "Use read-only analysis.\n", "utf8");
+        const agentSource = await NodeFSP.readFile(mockAgentPath, "utf8");
+        const noAskAgentSource = agentSource.replace(
+          '  {\n    id: "ask",\n    name: "Ask",\n    description: "Request permission before making any changes",\n  },\n',
+          "",
+        );
+        if (noAskAgentSource === agentSource) {
+          throw new Error("Could not remove the Ask mode from the ACP mock agent.");
+        }
+        await NodeFSP.writeFile(noAskAgentPath, noAskAgentSource, "utf8");
+        await NodeFSP.writeFile(requestLogPath, "", "utf8");
+      });
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath, undefined, noAskAgentPath),
+      );
+      const adapter = yield* makeCursorAdapter(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        { environment: { ...process.env, USERPROFILE: userProfile } },
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "/ask inspect this", attachments: [] });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const prompt = requests.find((entry) => entry.method === "session/prompt");
+      const promptParts = (prompt?.params as Record<string, unknown> | undefined)?.prompt as
+        | Array<Record<string, unknown>>
+        | undefined;
+      const promptText = String(promptParts?.[0]?.text ?? "");
+      assert.include(promptText, "Use read-only analysis.");
+      assert.include(promptText, "<cursor-user-request>\ninspect this\n</cursor-user-request>");
+      assert.notInclude(
+        requests.flatMap((entry) =>
+          entry.method === "session/set_mode"
+            ? [String((entry.params as Record<string, unknown> | undefined)?.modeId)]
+            : [],
+        ),
+        "ask",
+      );
+    }),
+  );
+
+  it.effect("expands each explicitly invoked Cursor skill once without rewriting the request", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("cursor-inline-skill");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-skill-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      const userProfile = NodePath.join(tempDir, "profile");
+      const skillPath = NodePath.join(userProfile, ".cursor", "skills", "review", "SKILL.md");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(skillPath), { recursive: true });
+        await NodeFSP.writeFile(
+          skillPath,
+          "---\nname: review\ndescription: Review a change\n---\n\nReview the current diff.\n",
+          "utf8",
+        );
+        await NodeFSP.writeFile(requestLogPath, "", "utf8");
+      });
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      const adapter = yield* makeCursorAdapter(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        { environment: { ...process.env, USERPROFILE: userProfile } },
+      );
+
+      const request = "Please $review $review before responding";
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({ threadId, input: request, attachments: [] });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const prompt = requests.find((entry) => entry.method === "session/prompt");
+      const promptParts = (prompt?.params as Record<string, unknown> | undefined)?.prompt as
+        | Array<Record<string, unknown>>
+        | undefined;
+      const promptText = String(promptParts?.[0]?.text ?? "");
+      assert.equal((promptText.match(/<cursor-skill /g) ?? []).length, 1);
+      assert.include(promptText, 'name="review"');
+      assert.include(promptText, "Review the current diff.");
+      assert.include(promptText, `<cursor-user-request>\n${request}\n</cursor-user-request>`);
     }),
   );
 

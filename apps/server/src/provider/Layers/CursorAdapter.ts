@@ -14,6 +14,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -21,6 +22,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -74,6 +76,13 @@ import {
   extractPlanMarkdown,
   extractTodosAsPlan,
 } from "../acp/CursorAcpExtension.ts";
+import {
+  discoverCursorSkills,
+  loadCursorAskmodeFallback,
+  loadCursorSkillByName,
+  type CursorAskmodeFallbackLoadResult,
+  type CursorSkillLoadResult,
+} from "../Drivers/CursorSkills.ts";
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -84,6 +93,79 @@ const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
+
+interface CursorPromptSkill {
+  readonly name: string;
+  readonly source: string;
+  readonly content: string;
+}
+
+export function parseCursorAskCommand(
+  input: string | undefined,
+): { readonly question: string } | undefined {
+  const match = /^\/ask(?:\s+([\s\S]*))?$/.exec(input?.trim() ?? "");
+  if (!match) {
+    return undefined;
+  }
+  return { question: (match[1] ?? "").trim() };
+}
+
+export function findCursorAskMode(
+  modeState: AcpSessionModeState | undefined,
+): AcpSessionMode | undefined {
+  return modeState?.availableModes.find(
+    (mode) => mode.name.trim().toLowerCase() === "ask" || mode.id.trim().toLowerCase() === "ask",
+  );
+}
+
+export function collectExplicitCursorSkillNames(request: string): ReadonlyArray<string> {
+  // The composer keeps a trailing token separately while autocomplete is
+  // open. Adapter input only carries the final text, so append whitespace to
+  // recognize a deliberate `$skill` at the end of a submitted prompt too.
+  return collectComposerInlineTokens(`${request} `).flatMap((token) =>
+    token.type === "skill" ? [token.value.toLowerCase()] : [],
+  );
+}
+
+function cursorSkillContent(
+  value: CursorSkillLoadResult | CursorAskmodeFallbackLoadResult | undefined,
+): { readonly name?: string; readonly content: string; readonly source: string } | undefined {
+  if (!value || value.kind !== "loaded" || !value.contents.trim()) {
+    return undefined;
+  }
+  if ("skill" in value) {
+    return {
+      name: value.skill.name,
+      content: value.contents,
+      source: value.skill.path,
+    };
+  }
+  return { content: value.contents, source: value.path };
+}
+
+function wrapCursorPrompt(input: {
+  readonly skills: ReadonlyArray<CursorPromptSkill>;
+  readonly request: string;
+}): string {
+  return [
+    ...input.skills.map(
+      (skill) =>
+        `<cursor-skill name=${JSON.stringify(skill.name)} source=${JSON.stringify(skill.source)}>` +
+        `\n<content>\n${skill.content}\n</content>\n</cursor-skill>`,
+    ),
+    `<cursor-user-request>\n${input.request}\n</cursor-user-request>`,
+  ].join("\n\n");
+}
+
+export function buildCursorExpandedPrompt(input: {
+  readonly skills: ReadonlyArray<CursorPromptSkill>;
+  readonly request: string;
+}): { readonly kind: "ready"; readonly text: string } | { readonly kind: "too-large" } {
+  const text = input.skills.length > 0 ? wrapCursorPrompt(input) : input.request;
+  return input.skills.length > 0 && text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+    ? { kind: "too-large" }
+    : { kind: "ready", text };
+}
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -363,6 +445,92 @@ export function makeCursorAdapter(
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+    const provideCursorSkillServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+
+    const prepareCursorPrompt = Effect.fn("CursorAdapter.prepareCursorPrompt")(function* (input: {
+      readonly text: string | undefined;
+      readonly modeState: AcpSessionModeState | undefined;
+    }) {
+      const askCommand = parseCursorAskCommand(input.text);
+      if (askCommand && !askCommand.question) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: "Usage: /ask <question>",
+        });
+      }
+
+      const request = askCommand ? askCommand.question : (input.text?.trim() ?? "");
+      const promptSkills: Array<CursorPromptSkill> = [];
+      const askMode = askCommand ? findCursorAskMode(input.modeState) : undefined;
+      if (askCommand && !askMode) {
+        const fallback = yield* provideCursorSkillServices(
+          loadCursorAskmodeFallback(options?.environment),
+        ).pipe(Effect.orElseSucceed(() => undefined));
+        const loadedFallback = cursorSkillContent(fallback);
+        if (!loadedFallback) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: "Cursor Ask mode is unavailable and the askmode fallback could not be loaded.",
+          });
+        }
+        promptSkills.push({
+          name: "askmode",
+          source: loadedFallback.source,
+          content: loadedFallback.content,
+        });
+      }
+
+      if (request) {
+        const knownSkills = new Map(
+          (yield* provideCursorSkillServices(discoverCursorSkills(options?.environment)).pipe(
+            Effect.orElseSucceed(() => [] as const),
+          )).map((skill) => [skill.name.toLowerCase(), skill]),
+        );
+        const expandedSkillNames = new Set<string>();
+        for (const skillName of collectExplicitCursorSkillNames(request)) {
+          if (expandedSkillNames.has(skillName)) {
+            continue;
+          }
+          const knownSkill = knownSkills.get(skillName);
+          if (!knownSkill) {
+            continue;
+          }
+          expandedSkillNames.add(skillName);
+          const loadedSkill = yield* provideCursorSkillServices(
+            loadCursorSkillByName(knownSkill.name, options?.environment),
+          ).pipe(Effect.orElseSucceed(() => undefined));
+          const skillContent = cursorSkillContent(loadedSkill);
+          if (!skillContent) {
+            continue;
+          }
+          promptSkills.push({
+            name: skillContent.name ?? knownSkill.name,
+            source: skillContent.source,
+            content: skillContent.content,
+          });
+        }
+      }
+
+      const expandedPrompt = buildCursorExpandedPrompt({ skills: promptSkills, request });
+      if (expandedPrompt.kind === "too-large") {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `Cursor skill expansion exceeds the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS}-character input limit. Remove one or more skill invocations.`,
+        });
+      }
+
+      return {
+        text: expandedPrompt.text,
+        ...(askMode ? { askModeId: askMode.id } : {}),
+      };
+    });
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -916,6 +1084,11 @@ export function makeCursorAdapter(
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(input.threadId);
+        const askCommand = parseCursorAskCommand(input.input);
+        const preparedPrompt = yield* prepareCursorPrompt({
+          text: input.input,
+          modeState: askCommand ? yield* ctx.acp.getModeState : undefined,
+        });
         // A sendTurn while a prompt is in flight is a steer: the agent folds
         // the new prompt into the ongoing work, so the active turn id is
         // reused instead of opening a new turn.
@@ -945,6 +1118,15 @@ export function makeCursorAdapter(
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
+          if (preparedPrompt.askModeId) {
+            yield* ctx.acp
+              .setMode(preparedPrompt.askModeId)
+              .pipe(
+                Effect.mapError((cause) =>
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
+                ),
+              );
+          }
           ctx.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
@@ -967,8 +1149,8 @@ export function makeCursorAdapter(
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-          if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
+          if (preparedPrompt.text) {
+            promptParts.push({ type: "text", text: preparedPrompt.text });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {

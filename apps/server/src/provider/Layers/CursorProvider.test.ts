@@ -323,6 +323,67 @@ describe("getCursorFallbackModels", () => {
 });
 
 describe("buildCursorProviderSnapshot", () => {
+  it("publishes Cursor-only skills and the /ask command for a usable Cursor snapshot", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "ready",
+          auth: { status: "authenticated" },
+        },
+        skills: [
+          {
+            name: "review",
+            description: "Review a change",
+            path: "/cursor/skills/review/SKILL.md",
+            scope: "user",
+            enabled: true,
+          },
+        ],
+      }),
+    ).toMatchObject({
+      slashCommands: [
+        {
+          name: "ask",
+          description: "Ask a question without making changes",
+          input: { hint: "Ask a question" },
+        },
+      ],
+      skills: [
+        {
+          name: "review",
+          path: "/cursor/skills/review/SKILL.md",
+        },
+      ],
+    });
+  });
+
+  it("does not publish Cursor inventory for an unusable Cursor snapshot", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "error",
+          auth: { status: "unauthenticated" },
+        },
+        skills: [
+          {
+            name: "review",
+            path: "/cursor/skills/review/SKILL.md",
+            enabled: true,
+          },
+        ],
+      }),
+    ).toMatchObject({
+      slashCommands: [],
+      skills: [],
+    });
+  });
+
   it("downgrades ready status to warning when ACP model discovery times out", () => {
     expect(
       buildCursorProviderSnapshot({
