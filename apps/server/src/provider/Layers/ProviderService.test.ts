@@ -1805,6 +1805,52 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
 const fanout = makeProviderServiceLayer();
 fanout.layer("ProviderServiceLive fanout", (it) => {
+  it.effect("clears automatic-continuation retry state after a completed turn", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-completed-retry-reset");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* directory.upsert({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimePayload: {
+          automaticContinuation: {
+            source: "restart-orphaned-provider-session",
+            consecutiveAttempts: 2,
+            lastAttemptedAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      });
+      yield* advanceTestClock(50);
+
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-completed-retry-reset"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: asTurnId("turn-completed-retry-reset"),
+        payload: { state: "completed" },
+      });
+      yield* advanceTestClock(50);
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.deepInclude(binding.value.runtimePayload, {
+          automaticContinuation: null,
+        });
+      }
+    }),
+  );
+
   it.effect("fans out adapter turn completion events", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

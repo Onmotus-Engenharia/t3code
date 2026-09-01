@@ -33,6 +33,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
 
@@ -216,6 +217,7 @@ const correlateRuntimeEventWithInstance = (
 const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
+  const providerScope = yield* Scope.Scope;
   const analytics = yield* Effect.service(AnalyticsService.AnalyticsService);
   const serverConfig = yield* ServerConfig.ServerConfig;
   const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
@@ -285,41 +287,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Effect.scoped(
-      Effect.succeed(event).pipe(
-        Effect.tap((canonicalEvent) =>
-          canonicalEventLogger
-            ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
-            : Effect.void,
-        ),
-        Effect.tap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
-        Effect.tap((canonicalEvent) =>
-          canonicalEvent.type === "turn.completed" && canonicalEvent.payload.state === "completed"
-            ? directory.getBinding(canonicalEvent.threadId).pipe(
-                Effect.flatMap((binding) =>
-                  Option.isNone(binding)
-                    ? Effect.void
-                    : directory.upsert({
-                        ...binding.value,
-                        runtimePayload: automaticContinuationRetryPayload(undefined),
-                      }),
-                ),
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("failed to reset automatic continuation retry state", {
-                    threadId: canonicalEvent.threadId,
-                    eventId: canonicalEvent.eventId,
-                    cause,
-                  }),
-                ),
-                // Retry state is durable but must never hold up the runtime
-                // event stream. The scoped fiber ends with this service.
-                Effect.forkScoped,
-                Effect.asVoid,
-              )
-            : Effect.void,
-        ),
-        Effect.asVoid,
+    Effect.succeed(event).pipe(
+      Effect.tap((canonicalEvent) =>
+        canonicalEventLogger
+          ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
+          : Effect.void,
       ),
+      Effect.tap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
+      Effect.tap((canonicalEvent) =>
+        canonicalEvent.type === "turn.completed" && canonicalEvent.payload.state === "completed"
+          ? directory.getBinding(canonicalEvent.threadId).pipe(
+              Effect.flatMap((binding) =>
+                Option.isNone(binding)
+                  ? Effect.void
+                  : directory.upsert({
+                      ...binding.value,
+                      runtimePayload: automaticContinuationRetryPayload(undefined),
+                    }),
+              ),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("failed to reset automatic continuation retry state", {
+                  threadId: canonicalEvent.threadId,
+                  eventId: canonicalEvent.eventId,
+                  cause,
+                }),
+              ),
+              // Retry state is durable but must never hold up the runtime
+              // event stream. The fiber ends with the provider service.
+              Effect.forkIn(providerScope),
+              Effect.asVoid,
+            )
+          : Effect.void,
+      ),
+      Effect.asVoid,
     );
 
   const requireBindingInstanceId = (

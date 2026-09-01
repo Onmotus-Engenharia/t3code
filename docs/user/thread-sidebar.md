@@ -35,9 +35,6 @@ When you un-settle an unpinned thread, it returns to the top of its active list.
 re-entering root moves its whole group, while a child or grandchild moves only among its siblings.
 Its timestamps do not change, and ordinary activity on an already-active thread does not reorder it.
 
-When you un-settle a thread, it returns to the top of the active list so you can find it right
-away. Its timestamps do not change. Other threads keep their positions.
-
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. Right-click the same link and choose **Unlink from thread** to remove it.
 
