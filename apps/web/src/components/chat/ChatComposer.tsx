@@ -231,6 +231,7 @@ import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
   NO_PROVIDER_MODEL_SELECTION,
   resolveProviderDriverKindForInstanceSelection,
   resolveSelectableProviderInstanceEntry,
@@ -238,6 +239,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
+import { providerModelKey } from "../../modelOrdering";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
@@ -255,6 +257,7 @@ import {
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { getNextEffortUpdate, getNextFavoriteModel } from "./composerModelCycling";
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -514,6 +517,8 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
+  selectNextFavoriteModel: () => void;
+  selectNextEffort: () => void;
   compactContext: () => void;
   readSnapshot: () => {
     value: string;
@@ -793,6 +798,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
+  const setComposerDraftProviderModelOptions = useComposerDraftStore(
+    (store) => store.setProviderModelOptions,
+  );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
 
   useEffect(() => {
@@ -1008,6 +1016,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? selectedModelForPicker
       : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
   }, [modelOptionsByInstance, selectedInstanceId, selectedModelForPicker, selectedProvider]);
+  const favoriteModelCandidates = useMemo(() => {
+    const favorites = new Set(
+      (settings.favorites ?? []).map((favorite) =>
+        providerModelKey(favorite.provider, favorite.model),
+      ),
+    );
+    const candidates: Array<{ instanceId: ProviderInstanceId; model: string }> = [];
+    for (const entry of providerInstanceEntries) {
+      if (!isProviderInstancePickerReady(entry)) continue;
+      if (lockedProvider !== null && entry.driverKind !== lockedProvider) continue;
+      if (lockedContinuationGroupKey && entry.continuationGroupKey !== lockedContinuationGroupKey) {
+        continue;
+      }
+      for (const model of modelOptionsByInstance.get(entry.instanceId) ?? []) {
+        if (!favorites.has(providerModelKey(entry.instanceId, model.slug))) continue;
+        if (getModelDisabledReason(entry.instanceId, model.slug)) continue;
+        candidates.push({ instanceId: entry.instanceId, model: model.slug });
+      }
+    }
+    return candidates;
+  }, [
+    getModelDisabledReason,
+    lockedContinuationGroupKey,
+    lockedProvider,
+    modelOptionsByInstance,
+    providerInstanceEntries,
+    settings.favorites,
+  ]);
+  const selectNextFavoriteModel = useCallback(() => {
+    const next = getNextFavoriteModel(
+      { instanceId: selectedInstanceId, model: selectedModel },
+      favoriteModelCandidates,
+    );
+    if (!next) return;
+    setIsComposerModelPickerOpen(false);
+    onProviderModelSelect(next.instanceId, next.model);
+  }, [favoriteModelCandidates, onProviderModelSelect, selectedInstanceId, selectedModel]);
 
   // ------------------------------------------------------------------
   // Context window
@@ -1402,6 +1447,47 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
   );
+  const selectNextEffort = useCallback(() => {
+    const update = getNextEffortUpdate({
+      provider: selectedProvider,
+      model: selectedModel,
+      models: selectedProviderModels,
+      modelOptions: composerModelOptions?.[selectedInstanceId],
+      prompt,
+      planModeEnabled: settings.planModeEnabled,
+    });
+    if (!update) return;
+    const target = routeKind === "server" ? routeThreadRef : draftId;
+    if (!target) return;
+
+    if (update.prompt !== undefined) {
+      setPromptFromTraits(update.prompt);
+    }
+    if (update.modelOptions !== undefined) {
+      setComposerDraftProviderModelOptions(target, selectedProvider, update.modelOptions, {
+        instanceId: selectedInstanceId,
+        model: selectedModel,
+        persistSticky: true,
+      });
+      if (update.prompt === undefined) {
+        scheduleComposerFocus();
+      }
+    }
+  }, [
+    composerModelOptions,
+    draftId,
+    prompt,
+    routeKind,
+    routeThreadRef,
+    scheduleComposerFocus,
+    selectedInstanceId,
+    selectedModel,
+    selectedProvider,
+    selectedProviderModels,
+    setComposerDraftProviderModelOptions,
+    setPromptFromTraits,
+    settings.planModeEnabled,
+  ]);
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
@@ -2859,6 +2945,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       toggleModelPicker: () => {
         setIsComposerModelPickerOpen((open) => !open);
       },
+      selectNextFavoriteModel,
+      selectNextEffort,
       compactContext: compactThreadContext,
       isModelPickerOpen: () => isComposerModelPickerOpen,
       readSnapshot: () => {
@@ -2962,6 +3050,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isComposerModelPickerOpen,
       isComposerCollapsedDesktop,
       readComposerSnapshot,
+      selectNextEffort,
+      selectNextFavoriteModel,
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedModelSelection,

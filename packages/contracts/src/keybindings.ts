@@ -48,6 +48,9 @@ export const MODEL_PICKER_KEYBINDING_COMMANDS = [
 ] as const;
 export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
+export const MODEL_KEYBINDING_COMMANDS = ["model.nextFavorite", "model.nextEffort"] as const;
+export type ModelKeybindingCommand = (typeof MODEL_KEYBINDING_COMMANDS)[number];
+
 export const SPLIT_VIEW_KEYBINDING_COMMANDS = [
   "splitView.focusPrevious",
   "splitView.focusNext",
@@ -85,6 +88,7 @@ export const CONFIGURABLE_STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "editor.openFavorite",
   ...SPLIT_VIEW_KEYBINDING_COMMANDS,
+  ...MODEL_KEYBINDING_COMMANDS,
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;

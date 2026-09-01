@@ -5055,6 +5055,20 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "model.nextFavorite") {
+        event.preventDefault();
+        event.stopPropagation();
+        composerRef.current?.selectNextFavoriteModel();
+        return;
+      }
+
+      if (command === "model.nextEffort") {
+        event.preventDefault();
+        event.stopPropagation();
+        composerRef.current?.selectNextEffort();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);

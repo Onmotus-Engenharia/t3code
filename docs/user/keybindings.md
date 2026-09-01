@@ -37,6 +37,9 @@ Invalid rules are ignored. An invalid file is ignored entirely, and the server l
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
+  { "key": "mod+shift+m", "command": "modelPicker.toggle", "when": "!terminalFocus" },
+  { "key": "mod+alt+.", "command": "model.nextFavorite", "when": "!terminalFocus" },
+  { "key": "mod+alt+,", "command": "model.nextEffort", "when": "!terminalFocus" },
   { "key": "mod+o", "command": "editor.openFavorite" },
   { "key": "mod+alt+[", "command": "splitView.focusPrevious", "when": "splitViewActive" },
   { "key": "mod+alt+]", "command": "splitView.focusNext", "when": "splitViewActive" }
@@ -75,6 +78,9 @@ Examples: `mod+j`, `mod+shift+d`, `ctrl+l`, `cmd+k`.
 - `commandPalette.toggle`: open or close the global command palette
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
+- `modelPicker.toggle`: open or close the model picker
+- `model.nextFavorite`: select the next available favorite model, wrapping at the end
+- `model.nextEffort`: select the next effort supported by the current model, wrapping at the end
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `splitView.focusPrevious`: focus the previous pane in the active split view
 - `splitView.focusNext`: focus the next pane in the active split view
