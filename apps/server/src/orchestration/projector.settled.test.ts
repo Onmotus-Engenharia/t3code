@@ -77,6 +77,8 @@ it.effect("projects settled lifecycle events", () =>
     expect(userUnsettled.threads[0]?.settledAt).toBeNull();
     expect(userUnsettled.threads[0]?.unsettledAt).toBe(unsettleAt);
 
+    // Clearing the keep-active pin on activity is not a re-entry: the thread
+    // is already in the active list, so the stamp must not move it.
     const activityAt = "2026-01-03T00:00:00.000Z";
     const activityUnsettled = yield* projectEvent(
       userUnsettled,
@@ -105,6 +107,7 @@ it.effect("projects settled lifecycle events", () =>
     );
     expect(resettled.threads[0]?.unsettledAt).toBeNull();
 
+    // Waking a settled thread on activity IS a re-entry and stamps.
     const wakeAt = "2026-01-05T00:00:00.000Z";
     const woke = yield* projectEvent(
       resettled,

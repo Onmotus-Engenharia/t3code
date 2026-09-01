@@ -11,7 +11,7 @@ import distribution from "../distribution.json" with { type: "json" };
 import contractsPackageJson from "../packages/contracts/package.json" with { type: "json" };
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 
-const ORCHESTRATOR_RELEASE_VERSION = "0.0.35-orchestrator.1";
+const ORCHESTRATOR_RELEASE_VERSION = "0.0.37-orchestrator.1";
 
 describe("custom distribution identity", () => {
   it("keeps install, runtime, protocol, and package identities visibly separate from upstream", () => {

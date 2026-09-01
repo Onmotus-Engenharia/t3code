@@ -3,18 +3,52 @@ import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
+import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import { memo } from "react";
-import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useColorScheme,
+  View,
+  type ViewStyle,
+} from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { GlassSurface } from "../../components/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
-import type { ComposerCommandItem } from "./composer-command-menu";
-
-export type { ComposerCommandItem } from "./composer-command-menu";
-import { useThemeColor } from "../../lib/useThemeColor";
+export type ComposerCommandItem =
+  | {
+      readonly id: string;
+      readonly type: "path";
+      readonly path: string;
+      readonly kind: "file" | "directory";
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "slash-command";
+      readonly command: string;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "provider-slash-command";
+      readonly command: ServerProviderSlashCommand;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "skill";
+      readonly skill: ServerProviderSkill;
+      readonly label: string;
+      readonly description: string;
+    };
 
 interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
@@ -24,7 +58,6 @@ interface ComposerCommandPopoverProps {
 }
 
 function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
-  const tintColor = useThemeColor("--color-glass-surface");
   const isDarkMode = useColorScheme() === "dark";
   const baseStyle: ViewStyle = {
     borderRadius: 16,
@@ -70,7 +103,11 @@ function PopoverSurface(props: { readonly children: React.ReactNode; readonly st
   }
 
   return (
-    <GlassSurface glassEffectStyle="clear" tintColor={tintColor} style={baseStyle}>
+    <GlassSurface
+      glassEffectStyle="clear"
+      tintColorClassName="accent-glass-surface"
+      style={baseStyle}
+    >
       {props.children}
     </GlassSurface>
   );
@@ -133,27 +170,23 @@ const CommandRow = memo(function CommandRow(props: {
   readonly isSlashSkill: boolean;
 }) {
   const iconName = itemIcon(props.item);
-  const iconColor = useThemeColor("--color-icon-subtle");
-  const borderColor = useThemeColor("--color-border");
 
   return (
     <Pressable
+      accessibilityRole="button"
       onPress={props.onPress}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        gap: 10,
-        opacity: pressed ? 0.6 : 1,
-        borderBottomWidth: props.isLast ? 0 : 0.5,
-        borderBottomColor: borderColor,
-      })}
+      className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
+      style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
     >
       {props.item.type === "path" ? (
         <PierreEntryIcon path={props.item.path} kind={props.item.kind} size={16} />
       ) : iconName ? (
-        <SymbolView name={iconName} size={14} tintColor={iconColor} type="monochrome" />
+        <SymbolView
+          name={iconName}
+          size={14}
+          tintColorClassName={"accent-icon-subtle"}
+          type="monochrome"
+        />
       ) : null}
       <Text className="shrink-0 text-base font-t3-medium text-foreground" numberOfLines={1}>
         {props.isSlashSkill && props.item.type === "skill" ? (

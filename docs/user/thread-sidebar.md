@@ -1,8 +1,11 @@
 # Organizing threads
 
 Pin a thread from its context menu to keep it in the pinned section above your active work.
-Pinned threads are shown independently of their project, including when you connect to more than
-one environment.
+`mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
+their project, including when you connect to more than one environment.
+
+To require confirmation before unpinning, enable **Settings → General → Unpin confirmation**. The
+confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p` shortcut.
 
 Open the same action menu by clicking the visible chevron beside the active thread title or by
 right-clicking its sidebar row. **Copy thread ID** is a top-level action in this menu.
@@ -31,6 +34,9 @@ warning in place so you can recover the thread manually.
 When you un-settle an unpinned thread, it returns to the top of its active list. In a task tree, a
 re-entering root moves its whole group, while a child or grandchild moves only among its siblings.
 Its timestamps do not change, and ordinary activity on an already-active thread does not reorder it.
+
+When you un-settle a thread, it returns to the top of the active list so you can find it right
+away. Its timestamps do not change. Other threads keep their positions.
 
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. Right-click the same link and choose **Unlink from thread** to remove it.
